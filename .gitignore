@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment / secrets
+.env
+*.env.local
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Dynamic storage (DB, logs, state files) — never commit
+storage/
+
+# Data cache
+data/
+!data/.gitkeep
+!data/events.yaml
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test / lint cache
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# OS (Windows)
+desktop.ini
+
+# Google Drive temp
+.tmp.driveupload/
+.tmp.drivedownload/
+
+# SQLite WAL
+*.db-shm
+*.db-wal
+

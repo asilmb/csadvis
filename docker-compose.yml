@@ -1,0 +1,139 @@
+services:
+  # ── TimescaleDB (PostgreSQL 16) ───────────────────────────────────────────────
+  db:
+    image: timescale/timescaledb:latest-pg16
+    restart: unless-stopped
+    stop_grace_period: 30s
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    env_file: .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cs2}
+      POSTGRES_USER: ${POSTGRES_USER:-cs2user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cs2pass}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./logs/db:/var/log/postgresql      # Локальные логи базы данных
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cs2user} -d ${POSTGRES_DB:-cs2}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ── Redis (Очередь задач и кэш) ──────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    stop_grace_period: 30s
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+      - ./logs/redis:/var/log/redis        # Локальные логи Redis
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── App: Dashboard + REST API ────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    command: ["app"]
+    restart: unless-stopped
+    stop_grace_period: 30s
+    ports:
+      - "${DASHBOARD_PORT:-8050}:8050"
+      - "${API_PORT:-8000}:8000"
+    env_file: .env
+    environment:
+      LOG_DIR: /app/logs
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - cs2_data:/data
+      - ./logs/app:/app/logs               # Локальные логи приложения
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ── Worker: Выполнение фоновых задач Celery ──────────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    command: ["worker", "--workers", "2"]
+    restart: unless-stopped
+    stop_grace_period: 30s
+    env_file: .env
+    environment:
+      LOG_DIR: /app/logs
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - cs2_data:/data
+      - backup_data:/app/backups           # Хранилище резервных копий БД
+      - ./logs/worker:/app/logs            # Локальные логи воркера
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+
+  # ── Beat: Планировщик задач Celery ──────────────────────────────────────────
+  beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    command: ["worker", "--beat"]
+    restart: unless-stopped
+    stop_grace_period: 30s
+    env_file: .env
+    environment:
+      LOG_DIR: /app/logs
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - cs2_data:/data
+      - backup_data:/app/backups           # Хранилище резервных копий БД
+      - ./logs/beat:/app/logs              # Локальные логи планировщика
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  cs2_data:
+    driver: local
+  pgdata:
+    driver: local
+  redis_data:
+    driver: local
+  backup_data:
+    driver: local

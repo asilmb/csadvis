@@ -1,0 +1,83 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cs2-analytics"
+version = "1.0.0"
+description = "CS2 Market Analytics Platform — EV calculator, risk engine, inventory advisor"
+requires-python = ">=3.11"
+dependencies = []   # managed via requirements.txt
+
+[project.scripts]
+cs2 = "cli:main"
+
+[tool.setuptools]
+packages = ["cli", "cli.utils"]
+
+# ─── pytest ───────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts   = "-v --tb=short -m 'not e2e and not slow'"
+markers   = [
+    "e2e:  end-to-end Playwright tests — require a running dashboard on localhost:8050",
+    "slow: stress / performance tests — excluded from default CI run",
+]
+
+# ─── ruff (linter + formatter + auto-fix / Rector analogue) ──────────────────
+[tool.ruff]
+target-version = "py311"
+line-length    = 100
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes (unused imports, undefined names, etc.)
+    "I",    # isort (import order)
+    "UP",   # pyupgrade  ← modernises syntax (Rector equivalent)
+    "B",    # flake8-bugbear (likely bugs and design issues)
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific rules
+    "C4",   # flake8-comprehensions
+    "PTH",  # pathlib over os.path
+]
+ignore = [
+    "E501",   # line too long — handled by formatter
+    "B008",   # do not perform function calls in argument defaults (Dash uses this)
+    "RUF012", # mutable class attributes — SQLAlchemy uses this pattern
+    "RUF001", # ambiguous Unicode in strings — intentional (Russian UI text)
+    "RUF002", # ambiguous Unicode in docstrings — intentional
+    "RUF003", # ambiguous Unicode in comments — intentional
+    "C408",   # unnecessary dict()/list() calls — cosmetic, fix manually if desired
+]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "api", "database", "engine", "frontend",
+    "ingestion", "scheduler", "scraper", "seed",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ─── mypy (static type checker / PHPStan equivalent) ─────────────────────────
+[tool.mypy]
+python_version         = "3.11"
+strict                 = false
+warn_return_any        = true
+warn_unused_ignores    = true
+warn_redundant_casts   = true
+disallow_untyped_defs  = true
+ignore_missing_imports = true   # third-party stubs not installed
+
+[[tool.mypy.overrides]]
+module = [
+    "dash.*",
+    "dash_bootstrap_components.*",
+    "plotly.*",
+    "apscheduler.*",
+    "sqlalchemy.*",
+]
+ignore_missing_imports = true
