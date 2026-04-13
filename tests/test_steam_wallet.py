@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ingestion.steam_wallet import (
+from scrapper.steam_wallet import (
     _parse_amount,
     fetch_wallet_balance,
     get_saved_balance,
@@ -146,7 +146,7 @@ class TestFetchWalletBalance:
         assert "403" in msg
 
     def test_element_not_found_raises_auth_error(self) -> None:
-        from ingestion.steam_wallet import AuthError
+        from scrapper.steam_wallet import AuthError
 
         html = "<html><body>Not logged in</body></html>"
         with (

@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from services.cache_writer import write_investment_signals, write_portfolio_advice
+from infra.cache_writer import write_investment_signals, write_portfolio_advice
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -80,7 +80,7 @@ def test_write_portfolio_advice_deletes_then_adds(mock_db):
 
 def test_write_portfolio_advice_row_fields(mock_db):
     """The inserted FactPortfolioAdvice row has correct scalar fields."""
-    from database.models import FactPortfolioAdvice
+    from domain.models import FactPortfolioAdvice
 
     captured = []
     mock_db.add.side_effect = lambda row: captured.append(row)
@@ -143,7 +143,7 @@ def test_write_portfolio_advice_no_commit_called(mock_db):
 
 def test_write_investment_signals_bulk_insert(mock_db):
     """One row per container_id is passed to bulk_save_objects."""
-    from database.models import FactInvestmentSignal
+    from domain.models import FactInvestmentSignal
 
     now = datetime(2026, 3, 28, 12, 0, 0)
     write_investment_signals(mock_db, _minimal_signals(), now)
@@ -211,21 +211,21 @@ def test_write_investment_signals_empty_signals(mock_db):
 
 
 def test_get_ratio_label_cheap():
-    from services.cache_writer import _get_ratio_label
+    from infra.cache_writer import _get_ratio_label
 
     assert _get_ratio_label(-10.0) == "CHEAP"
     assert _get_ratio_label(-50.0) == "CHEAP"
 
 
 def test_get_ratio_label_expensive():
-    from services.cache_writer import _get_ratio_label
+    from infra.cache_writer import _get_ratio_label
 
     assert _get_ratio_label(10.0) == "EXPENSIVE"
     assert _get_ratio_label(99.0) == "EXPENSIVE"
 
 
 def test_get_ratio_label_neutral():
-    from services.cache_writer import _get_ratio_label
+    from infra.cache_writer import _get_ratio_label
 
     assert _get_ratio_label(0.0) == "NEUTRAL"
     assert _get_ratio_label(5.0) == "NEUTRAL"
@@ -233,27 +233,27 @@ def test_get_ratio_label_neutral():
 
 
 def test_get_ratio_label_none():
-    from services.cache_writer import _get_ratio_label
+    from infra.cache_writer import _get_ratio_label
 
     assert _get_ratio_label(None) == "NEUTRAL"
 
 
 def test_get_momentum_label_rising():
-    from services.cache_writer import _get_momentum_label
+    from infra.cache_writer import _get_momentum_label
 
     assert _get_momentum_label(5.0) == "RISING"
     assert _get_momentum_label(20.0) == "RISING"
 
 
 def test_get_momentum_label_falling():
-    from services.cache_writer import _get_momentum_label
+    from infra.cache_writer import _get_momentum_label
 
     assert _get_momentum_label(-5.0) == "FALLING"
     assert _get_momentum_label(-20.0) == "FALLING"
 
 
 def test_get_momentum_label_stable():
-    from services.cache_writer import _get_momentum_label
+    from infra.cache_writer import _get_momentum_label
 
     assert _get_momentum_label(0.0) == "STABLE"
     assert _get_momentum_label(4.9) == "STABLE"
@@ -261,7 +261,7 @@ def test_get_momentum_label_stable():
 
 
 def test_get_momentum_label_none():
-    from services.cache_writer import _get_momentum_label
+    from infra.cache_writer import _get_momentum_label
 
     assert _get_momentum_label(None) == "STABLE"
 
@@ -308,7 +308,7 @@ def test_write_investment_signals_ratio_momentum_mapped_from_engine_keys(mock_db
 
 def test_get_cached_portfolio_advice_returns_none_on_empty():
     """Returns None when fact_portfolio_advice table is empty."""
-    from services.portfolio import get_cached_portfolio_advice
+    from domain.portfolio import get_cached_portfolio_advice
 
     mock_db_instance = MagicMock()
     mock_query = MagicMock()
@@ -316,7 +316,7 @@ def test_get_cached_portfolio_advice_returns_none_on_empty():
     mock_query.order_by.return_value = mock_query
     mock_query.first.return_value = None
 
-    with patch("services.portfolio.SessionLocal", return_value=mock_db_instance):
+    with patch("domain.portfolio.SessionLocal", return_value=mock_db_instance):
         result = get_cached_portfolio_advice()
 
     assert result is None
@@ -324,8 +324,8 @@ def test_get_cached_portfolio_advice_returns_none_on_empty():
 
 def test_get_cached_portfolio_advice_deserialises_json():
     """Returns a dict with flip/invest deserialised from JSON strings."""
-    from database.models import FactPortfolioAdvice
-    from services.portfolio import get_cached_portfolio_advice
+    from domain.models import FactPortfolioAdvice
+    from domain.portfolio import get_cached_portfolio_advice
 
     fake_row = MagicMock(spec=FactPortfolioAdvice)
     fake_row.computed_at = datetime(2026, 3, 28, 10, 0, 0)
@@ -348,7 +348,7 @@ def test_get_cached_portfolio_advice_deserialises_json():
     mock_query.order_by.return_value = mock_query
     mock_query.first.return_value = fake_row
 
-    with patch("services.portfolio.SessionLocal", return_value=mock_db_instance):
+    with patch("domain.portfolio.SessionLocal", return_value=mock_db_instance):
         result = get_cached_portfolio_advice()
 
     assert result is not None
@@ -359,14 +359,14 @@ def test_get_cached_portfolio_advice_deserialises_json():
 
 def test_get_cached_signals_returns_empty_on_no_data():
     """Returns empty dict when fact_investment_signals table is empty."""
-    from services.portfolio import get_cached_signals
+    from domain.portfolio import get_cached_signals
 
     mock_db_instance = MagicMock()
     mock_query = MagicMock()
     mock_db_instance.query.return_value = mock_query
     mock_query.scalar.return_value = None
 
-    with patch("services.portfolio.SessionLocal", return_value=mock_db_instance):
+    with patch("domain.portfolio.SessionLocal", return_value=mock_db_instance):
         result = get_cached_signals()
 
     assert result == {}
@@ -374,8 +374,8 @@ def test_get_cached_signals_returns_empty_on_no_data():
 
 def test_get_cached_signals_returns_latest_batch():
     """Returns all rows from the most-recent computed_at batch as a dict."""
-    from database.models import FactInvestmentSignal
-    from services.portfolio import get_cached_signals
+    from domain.models import FactInvestmentSignal
+    from domain.portfolio import get_cached_signals
 
     ts = datetime(2026, 3, 28, 12, 0, 0)
 
@@ -412,7 +412,7 @@ def test_get_cached_signals_returns_latest_batch():
     mock_query_rows.filter.return_value = mock_query_rows
     mock_query_rows.all.return_value = rows
 
-    with patch("services.portfolio.SessionLocal", return_value=mock_db_instance):
+    with patch("domain.portfolio.SessionLocal", return_value=mock_db_instance):
         result = get_cached_signals()
 
     assert len(result) == 2

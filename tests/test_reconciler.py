@@ -17,9 +17,9 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from database.models import Base, Position, PositionStatus
-from database.repositories import PositionDTO, SqlAlchemyPositionRepository
-from services.reconciler import PositionReconciler, ReconcileResult
+from domain.models import Base, Position, PositionStatus
+from domain.sql_repositories import PositionDTO, SqlAlchemyPositionRepository
+from domain.reconciler import PositionReconciler, ReconcileResult
 
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────

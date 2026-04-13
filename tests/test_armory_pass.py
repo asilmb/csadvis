@@ -7,7 +7,7 @@ import math
 import pytest
 
 from domain.value_objects import Amount, ROI
-from engine.armory_pass import ArmoryPassResult, compare_armory_pass
+from domain.armory_pass import ArmoryPassResult, compare_armory_pass
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
 

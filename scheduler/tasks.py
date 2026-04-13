@@ -85,8 +85,8 @@ def fetch_steam_price(self, item_id: str) -> float | None:
         raise self.retry(countdown=_RETRY_COUNTDOWN)
 
     # ── Resolve container name ─────────────────────────────────────────────────
-    from database.connection import SessionLocal
-    from database.models import DimContainer
+    from domain.connection import SessionLocal
+    from domain.models import DimContainer
 
     with SessionLocal() as db:
         container = db.get(DimContainer, item_id)
@@ -104,8 +104,8 @@ def fetch_steam_price(self, item_id: str) -> float | None:
     # ── Fetch price via Steam client ───────────────────────────────────────────
     import asyncio
 
-    from ingestion.steam.client import SteamMarketClient
-    from ingestion.steam.formatter import InvalidHashNameError, to_api_name
+    from scrapper.steam.client import SteamMarketClient
+    from scrapper.steam.formatter import InvalidHashNameError, to_api_name
 
     try:
         api_name = to_api_name(container_name)
@@ -167,7 +167,7 @@ def fetch_steam_price(self, item_id: str) -> float | None:
         return None
 
     # ── Persist via ItemService (validation + save) ────────────────────────────
-    from services.item_service import ItemService
+    from domain.item_service import ItemService
 
     _t0 = time.monotonic()
     svc = ItemService.open()
@@ -228,8 +228,8 @@ def poll_container_prices_task(self) -> dict:
         logger.info("poll_skipped_stealth_block", service="tasks")
         return {"queued": 0, "skipped_blacklisted": 0, "skipped_block": 1, "backfill_triggered": 0}
 
-    from database.connection import SessionLocal
-    from database.models import DimContainer, FactContainerPrice
+    from domain.connection import SessionLocal
+    from domain.models import DimContainer, FactContainerPrice
 
     with SessionLocal() as db:
         containers = db.query(DimContainer).filter(
@@ -306,8 +306,8 @@ def backfill_history_task(self, names: list[str] | None = None) -> dict:
 
     from sqlalchemy import func
 
-    from database.connection import SessionLocal
-    from database.models import DimContainer, FactContainerPrice
+    from domain.connection import SessionLocal
+    from domain.models import DimContainer, FactContainerPrice
 
     if _is_stealth_blocked():
         logger.info("backfill_skipped_stealth_block", service="tasks")
@@ -352,8 +352,8 @@ def backfill_history_task(self, names: list[str] | None = None) -> dict:
 
     logger.info("backfill_started", service="tasks", total=len(ordered_names))
 
-    from ingestion.steam.client import SteamMarketClient
-    from ingestion.steam.formatter import InvalidHashNameError, to_api_name
+    from scrapper.steam.client import SteamMarketClient
+    from scrapper.steam.formatter import InvalidHashNameError, to_api_name
 
     _attempt = self.request.retries
 
@@ -499,7 +499,7 @@ def sync_inventory_task(self) -> dict:
 
     import asyncio
 
-    from ingestion.steam_inventory import SteamInventoryClient
+    from scrapper.steam_inventory import SteamInventoryClient
 
     async def _fetch() -> list[dict]:
         async with SteamInventoryClient() as client:
@@ -539,12 +539,12 @@ def sync_inventory_task(self) -> dict:
         return {"status": "ok", "items": 0, "reconciled": False}
 
     # ── Persist trade-ban dates ────────────────────────────────────────────────
-    from database.connection import SessionLocal
-    from database.repositories import (
+    from domain.connection import SessionLocal
+    from domain.sql_repositories import (
         SqlAlchemyInventoryRepository,
         SqlAlchemyPositionRepository,
     )
-    from services.reconciler import PositionReconciler
+    from domain.reconciler import PositionReconciler
 
     with SessionLocal() as db:
         inv_repo = SqlAlchemyInventoryRepository(db)
@@ -591,8 +591,8 @@ def cleanup_old_history_task(self) -> dict:
 
     Returns a summary dict: {status, rows_deleted, summaries_inserted}.
     """
-    from database.connection import SessionLocal
-    from database.postgres_repo import PostgresRepository
+    from domain.connection import SessionLocal
+    from domain.postgres_repo import PostgresRepository
 
     _t0 = time.monotonic()
     logger.info("downsampling_started", service="tasks")

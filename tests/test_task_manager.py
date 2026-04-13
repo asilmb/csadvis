@@ -21,8 +21,8 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from database.models import Base
-from database.repositories import SqlAlchemyTaskQueueRepository, TaskDTO
+from domain.models import Base
+from domain.sql_repositories import SqlAlchemyTaskQueueRepository, TaskDTO
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -216,7 +216,7 @@ class TestComplete:
         repo.complete(dto.id)
         db.commit()
 
-        from database.models import TaskQueue
+        from domain.models import TaskQueue
         row = db.query(TaskQueue).filter(TaskQueue.id == dto.id).first()
         assert str(row.status) == "COMPLETED"
 
@@ -237,7 +237,7 @@ class TestFail:
         repo.fail(dto.id, max_retries=3)
         db.commit()
 
-        from database.models import TaskQueue
+        from domain.models import TaskQueue
         row = db.query(TaskQueue).filter(TaskQueue.id == dto.id).first()
         assert row.retries == 1
 
@@ -256,7 +256,7 @@ class TestFail:
         repo.pick_task()
         db.commit()
         # Simulate 2 prior retries already recorded
-        from database.models import TaskQueue
+        from domain.models import TaskQueue
         row = db.query(TaskQueue).filter(TaskQueue.id == dto.id).first()
         row.retries = 2
         db.commit()
@@ -282,7 +282,7 @@ class TestFail:
         repo.fail(dto.id, max_retries=5)
         db.commit()
 
-        from database.models import TaskQueue
+        from domain.models import TaskQueue
         row = db.query(TaskQueue).filter(TaskQueue.id == dto.id).first()
         assert row.retries == 2
         assert str(row.status) == "RETRY"
@@ -299,26 +299,26 @@ class TestTaskQueueServiceExtensions:
         """Return (svc, SM) with a real in-memory engine."""
         from sqlalchemy.orm import sessionmaker
         from unittest.mock import patch
-        from services.task_manager import TaskQueueService
+        from infra.task_manager import TaskQueueService
 
         engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
         Base.metadata.create_all(engine)
         SM = sessionmaker(bind=engine)
         svc = TaskQueueService()
-        with patch("database.connection.SessionLocal", SM):
+        with patch("domain.connection.SessionLocal", SM):
             yield svc, SM
         engine.dispose()
 
     def test_flush_failed_deletes_only_failed(self, _svc_cm):
         svc, SM = _svc_cm
         with SM() as db:
-            from database.repositories import SqlAlchemyTaskQueueRepository
+            from domain.sql_repositories import SqlAlchemyTaskQueueRepository
             repo = SqlAlchemyTaskQueueRepository(db)
             t1 = repo.enqueue("sync", priority=1)
             t2 = repo.enqueue("sync2", priority=2)
             db.commit()
             # manually set one to FAILED
-            from database.models import TaskQueue, TaskStatus
+            from domain.models import TaskQueue, TaskStatus
             db.query(TaskQueue).filter(TaskQueue.id == t1.id).update({"status": TaskStatus.FAILED})
             db.commit()
 
@@ -326,14 +326,14 @@ class TestTaskQueueServiceExtensions:
         assert count == 1
 
         with SM() as db:
-            from database.models import TaskQueue
+            from domain.models import TaskQueue
             remaining = db.query(TaskQueue).count()
         assert remaining == 1  # t2 (PENDING) is not deleted
 
     def test_reset_stuck_workers_changes_status(self, _svc_cm):
         svc, SM = _svc_cm
         with SM() as db:
-            from database.models import WorkerRegistry
+            from domain.models import WorkerRegistry
             db.add(WorkerRegistry(name="w1", status="STUCK"))
             db.add(WorkerRegistry(name="w2", status="DEAD"))
             db.add(WorkerRegistry(name="w3", status="IDLE"))
@@ -343,7 +343,7 @@ class TestTaskQueueServiceExtensions:
         assert count == 2
 
         with SM() as db:
-            from database.models import WorkerRegistry
+            from domain.models import WorkerRegistry
             statuses = {w.name: w.status for w in db.query(WorkerRegistry).all()}
         assert statuses["w1"] == "IDLE"
         assert statuses["w2"] == "IDLE"
@@ -352,12 +352,12 @@ class TestTaskQueueServiceExtensions:
     def test_get_system_health_returns_snapshot(self, _svc_cm):
         svc, SM = _svc_cm
         with SM() as db:
-            from database.repositories import SqlAlchemyTaskQueueRepository
+            from domain.sql_repositories import SqlAlchemyTaskQueueRepository
             repo = SqlAlchemyTaskQueueRepository(db)
             repo.enqueue("backfill", priority=3)
             db.commit()
 
-        from services.task_manager import SystemHealth
+        from infra.task_manager import SystemHealth
         h = svc.get_system_health()
         assert isinstance(h, SystemHealth)
         assert h.pending_count == 1

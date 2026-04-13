@@ -17,7 +17,7 @@ from fastapi import FastAPI
 
 from api.app import create_app
 from config import settings
-from database.connection import SessionLocal, engine, init_db
+from domain.connection import SessionLocal, engine, init_db
 from infra.logger import configure_logging
 from seed.data import seed_database
 

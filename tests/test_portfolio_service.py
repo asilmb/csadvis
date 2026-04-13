@@ -2,7 +2,7 @@
 Phase 2 — TDD tests for services/portfolio.py new interfaces (PV-01).
 
 Tests are written BEFORE implementation (Red stage).
-All imports from services.portfolio will pass only after Phase 3 migration.
+All imports from domain.portfolio will pass only after Phase 3 migration.
 
 Coverage:
   1. compute_pnl            — точность, нули, экстремальные значения
@@ -22,7 +22,7 @@ from sqlalchemy.exc import OperationalError as SAOperationalError
 
 # ─── Imports under test ───────────────────────────────────────────────────────
 # These will raise ImportError until Phase 3 migrates the functions.
-from services.portfolio import (
+from domain.portfolio import (
     compute_pnl,
     get_annual_summaries,
     get_balance_data,
@@ -114,8 +114,8 @@ class TestGetBalanceData:
 
     def test_empty_inventory_no_snapshots(self):
         with (
-            patch("services.portfolio.get_snapshots", return_value=[]),
-            patch("services.portfolio.get_portfolio_data", return_value={}),
+            patch("domain.portfolio.get_snapshots", return_value=[]),
+            patch("domain.portfolio.get_portfolio_data", return_value={}),
         ):
             result = get_balance_data(1000.0, None)
 
@@ -130,8 +130,8 @@ class TestGetBalanceData:
         inventory = [{"market_hash_name": "Test Case", "count": 2}]
 
         with (
-            patch("services.portfolio.get_snapshots", return_value=[]),
-            patch("services.portfolio.get_portfolio_data", return_value=prices),
+            patch("domain.portfolio.get_snapshots", return_value=[]),
+            patch("domain.portfolio.get_portfolio_data", return_value=prices),
         ):
             result = get_balance_data(1000.0, inventory)
 
@@ -144,8 +144,8 @@ class TestGetBalanceData:
         snapshots = [_SNAPSHOT_TEMPLATE.copy()]  # oldest total = 1300
 
         with (
-            patch("services.portfolio.get_snapshots", return_value=snapshots),
-            patch("services.portfolio.get_portfolio_data", return_value=prices),
+            patch("domain.portfolio.get_snapshots", return_value=snapshots),
+            patch("domain.portfolio.get_portfolio_data", return_value=prices),
         ):
             result = get_balance_data(1000.0, inventory)
 
@@ -158,8 +158,8 @@ class TestGetBalanceData:
         ]
 
         with (
-            patch("services.portfolio.get_snapshots", return_value=snapshots),
-            patch("services.portfolio.get_portfolio_data", return_value={}),
+            patch("domain.portfolio.get_snapshots", return_value=snapshots),
+            patch("domain.portfolio.get_portfolio_data", return_value={}),
         ):
             result = get_balance_data(1000.0, None)
 
@@ -167,8 +167,8 @@ class TestGetBalanceData:
 
     def test_delta_kzt_is_none_when_no_snapshots(self):
         with (
-            patch("services.portfolio.get_snapshots", return_value=[]),
-            patch("services.portfolio.get_portfolio_data", return_value={}),
+            patch("domain.portfolio.get_snapshots", return_value=[]),
+            patch("domain.portfolio.get_portfolio_data", return_value={}),
         ):
             result = get_balance_data(500.0, None)
 
@@ -179,8 +179,8 @@ class TestGetBalanceData:
         inventory = [{"market_hash_name": "Unknown Item 2077", "count": 5}]
 
         with (
-            patch("services.portfolio.get_snapshots", return_value=[]),
-            patch("services.portfolio.get_portfolio_data", return_value={}),
+            patch("domain.portfolio.get_snapshots", return_value=[]),
+            patch("domain.portfolio.get_portfolio_data", return_value={}),
         ):
             result = get_balance_data(1000.0, inventory)
 
@@ -189,8 +189,8 @@ class TestGetBalanceData:
 
     def test_result_contains_required_keys(self):
         with (
-            patch("services.portfolio.get_snapshots", return_value=[]),
-            patch("services.portfolio.get_portfolio_data", return_value={}),
+            patch("domain.portfolio.get_snapshots", return_value=[]),
+            patch("domain.portfolio.get_portfolio_data", return_value={}),
         ):
             result = get_balance_data(1000.0, None)
 
@@ -206,8 +206,8 @@ class TestGetBalanceData:
         snapshots = [_SNAPSHOT_TEMPLATE.copy(), _SNAPSHOT_TEMPLATE.copy()]
 
         with (
-            patch("services.portfolio.get_snapshots", return_value=snapshots),
-            patch("services.portfolio.get_portfolio_data", return_value={}),
+            patch("domain.portfolio.get_snapshots", return_value=snapshots),
+            patch("domain.portfolio.get_portfolio_data", return_value={}),
         ):
             result = get_balance_data(1000.0, None)
 
@@ -215,8 +215,8 @@ class TestGetBalanceData:
 
     def test_zero_wallet_kzt(self):
         with (
-            patch("services.portfolio.get_snapshots", return_value=[]),
-            patch("services.portfolio.get_portfolio_data", return_value={}),
+            patch("domain.portfolio.get_snapshots", return_value=[]),
+            patch("domain.portfolio.get_portfolio_data", return_value={}),
         ):
             result = get_balance_data(0.0, None)
 
@@ -271,33 +271,33 @@ class TestGetTransactionsSchema:
 
     def test_returns_list(self):
         mock_session = self._patched_session([])
-        with patch("services.portfolio.SessionLocal", return_value=mock_session):
+        with patch("domain.portfolio.SessionLocal", return_value=mock_session):
             result = get_transactions()
         assert isinstance(result, list)
 
     def test_empty_db_returns_empty_list(self):
         mock_session = self._patched_session([])
-        with patch("services.portfolio.SessionLocal", return_value=mock_session):
+        with patch("domain.portfolio.SessionLocal", return_value=mock_session):
             result = get_transactions()
         assert result == []
 
     def test_row_contains_required_keys(self):
         mock_session = self._patched_session([_make_mock_tx_row()])
-        with patch("services.portfolio.SessionLocal", return_value=mock_session):
+        with patch("domain.portfolio.SessionLocal", return_value=mock_session):
             result = get_transactions()
         assert len(result) == 1
         assert result[0].keys() >= _REQUIRED_TX_KEYS
 
     def test_date_is_formatted_string(self):
         mock_session = self._patched_session([_make_mock_tx_row()])
-        with patch("services.portfolio.SessionLocal", return_value=mock_session):
+        with patch("domain.portfolio.SessionLocal", return_value=mock_session):
             result = get_transactions()
         assert result[0]["date"] == "2026-03-01"
 
     def test_year_filter_applied(self):
         """get_transactions(year=2026) должен добавлять фильтр по году."""
         mock_session = self._patched_session([])
-        with patch("services.portfolio.SessionLocal", return_value=mock_session):
+        with patch("domain.portfolio.SessionLocal", return_value=mock_session):
             result = get_transactions(year=2026)
         # Фильтр должен быть вызван (query.filter вызывался)
         assert isinstance(result, list)
@@ -332,33 +332,33 @@ class TestGetSnapshotsSchema:
 
     def test_returns_list(self):
         mock_session = self._patched_session([])
-        with patch("services.portfolio.SessionLocal", return_value=mock_session):
+        with patch("domain.portfolio.SessionLocal", return_value=mock_session):
             result = get_snapshots()
         assert isinstance(result, list)
 
     def test_empty_db_returns_empty_list(self):
         mock_session = self._patched_session([])
-        with patch("services.portfolio.SessionLocal", return_value=mock_session):
+        with patch("domain.portfolio.SessionLocal", return_value=mock_session):
             result = get_snapshots()
         assert result == []
 
     def test_row_contains_required_keys(self):
         mock_session = self._patched_session([_make_mock_snapshot_row()])
-        with patch("services.portfolio.SessionLocal", return_value=mock_session):
+        with patch("domain.portfolio.SessionLocal", return_value=mock_session):
             result = get_snapshots()
         assert len(result) == 1
         assert result[0].keys() >= _REQUIRED_SNAPSHOT_KEYS
 
     def test_total_kzt_computed_as_sum(self):
         mock_session = self._patched_session([_make_mock_snapshot_row()])
-        with patch("services.portfolio.SessionLocal", return_value=mock_session):
+        with patch("domain.portfolio.SessionLocal", return_value=mock_session):
             result = get_snapshots()
         row = result[0]
         assert row["total"] == pytest.approx(row["wallet"] + row["inventory"])
 
     def test_date_is_formatted_string(self):
         mock_session = self._patched_session([_make_mock_snapshot_row()])
-        with patch("services.portfolio.SessionLocal", return_value=mock_session):
+        with patch("domain.portfolio.SessionLocal", return_value=mock_session):
             result = get_snapshots()
         assert result[0]["date"] == "2026-03-15"
 
@@ -367,7 +367,7 @@ class TestGetSnapshotsSchema:
         row = _make_mock_snapshot_row()
         row.inventory = None
         mock_session = self._patched_session([row])
-        with patch("services.portfolio.SessionLocal", return_value=mock_session):
+        with patch("domain.portfolio.SessionLocal", return_value=mock_session):
             result = get_snapshots()
         assert result[0]["inventory"] == 0.0
         assert result[0]["total"] == pytest.approx(row.wallet)
@@ -386,21 +386,21 @@ class TestDbUnavailability:
     def test_get_snapshots_raises_on_db_error(self):
         """get_snapshots пробрасывает исключение — caller (Dash callback) сам решает fallback."""
         with (
-            patch("services.portfolio.SessionLocal", side_effect=_SA_ERROR),
+            patch("domain.portfolio.SessionLocal", side_effect=_SA_ERROR),
             pytest.raises(SAOperationalError),
         ):
             get_snapshots()
 
     def test_get_transactions_raises_on_db_error(self):
         with (
-            patch("services.portfolio.SessionLocal", side_effect=_SA_ERROR),
+            patch("domain.portfolio.SessionLocal", side_effect=_SA_ERROR),
             pytest.raises(SAOperationalError),
         ):
             get_transactions()
 
     def test_get_annual_summaries_raises_on_db_error(self):
         with (
-            patch("services.portfolio.SessionLocal", side_effect=_SA_ERROR),
+            patch("domain.portfolio.SessionLocal", side_effect=_SA_ERROR),
             pytest.raises(SAOperationalError),
         ):
             get_annual_summaries()
@@ -408,8 +408,8 @@ class TestDbUnavailability:
     def test_get_balance_data_propagates_db_error(self):
         """get_balance_data вызывает get_snapshots — ошибка должна пробрасываться."""
         with (
-            patch("services.portfolio.get_portfolio_data", return_value={}),
-            patch("services.portfolio.get_snapshots", side_effect=_SA_ERROR),
+            patch("domain.portfolio.get_portfolio_data", return_value={}),
+            patch("domain.portfolio.get_snapshots", side_effect=_SA_ERROR),
             pytest.raises(SAOperationalError),
         ):
             get_balance_data(1000.0, None)

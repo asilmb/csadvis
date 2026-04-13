@@ -94,7 +94,7 @@ class TestPost:
         """_post must call httpx.Client.post with the correct URL and JSON payload."""
         import httpx
 
-        from services.webhook_dispatcher import _post
+        from infra.webhook_dispatcher import _post
 
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -117,7 +117,7 @@ class TestPost:
 
         import httpx
 
-        from services.webhook_dispatcher import _post
+        from infra.webhook_dispatcher import _post
 
         mock_client = MagicMock()
         mock_client.__enter__ = MagicMock(return_value=mock_client)

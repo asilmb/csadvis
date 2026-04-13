@@ -45,7 +45,7 @@ def cmd_init(args) -> None:
         sys.exit(1)
 
     # ── DB init + seed ────────────────────────────────────────────────────────
-    from database.connection import SessionLocal, init_db
+    from domain.connection import SessionLocal, init_db
     from seed.data import seed_database
 
     print("[INIT] init_db ......... ", end="", flush=True)
@@ -117,7 +117,7 @@ def cmd_cookie(args) -> None:
     # ── Try auto-read from Chrome (only works when Chrome is closed) ──────────
     print("\n  Trying to read cookie from Chrome automatically...")
     try:
-        from ingestion.steam_wallet import read_cookie_from_chrome
+        from scrapper.steam_wallet import read_cookie_from_chrome
 
         cookie = read_cookie_from_chrome()
         if cookie:
@@ -218,10 +218,10 @@ def cmd_clean(args) -> None:
     # ── WorkerRegistry reset ──────────────────────────────────────────────────
     workers_reset = 0
     try:
-        from database.connection import SessionLocal, init_db
+        from domain.connection import SessionLocal, init_db
 
         init_db()
-        from database.models import WorkerRegistry
+        from domain.models import WorkerRegistry
 
         with SessionLocal() as db:
             workers_reset = db.query(WorkerRegistry).delete(synchronize_session=False)

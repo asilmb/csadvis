@@ -126,7 +126,7 @@ class TestFetchSteamPrice:
         mock_session.__exit__ = MagicMock(return_value=False)
 
         with patch("scheduler.tasks._is_stealth_blocked", return_value=False), \
-             patch("database.connection.SessionLocal", return_value=mock_session):
+             patch("domain.connection.SessionLocal", return_value=mock_session):
             result = fetch_steam_price.run("nonexistent-uuid")
 
         assert result is None
@@ -146,7 +146,7 @@ class TestFetchSteamPrice:
         mock_session.__exit__ = MagicMock(return_value=False)
 
         with patch("scheduler.tasks._is_stealth_blocked", return_value=False), \
-             patch("database.connection.SessionLocal", return_value=mock_session):
+             patch("domain.connection.SessionLocal", return_value=mock_session):
             result = fetch_steam_price.run("blacklisted-uuid")
 
         assert result is None
@@ -182,7 +182,7 @@ class TestPollContainerPricesTask:
         mock_session.__exit__ = MagicMock(return_value=False)
 
         with patch("scheduler.tasks._is_stealth_blocked", return_value=False), \
-             patch("database.connection.SessionLocal", return_value=mock_session), \
+             patch("domain.connection.SessionLocal", return_value=mock_session), \
              patch("scheduler.tasks.fetch_steam_price") as mock_task, \
              patch("scheduler.tasks.backfill_history_task") as mock_backfill:
             result = poll_container_prices_task.run()
@@ -210,7 +210,7 @@ class TestPollContainerPricesTask:
         mock_session.__exit__ = MagicMock(return_value=False)
 
         with patch("scheduler.tasks._is_stealth_blocked", return_value=False), \
-             patch("database.connection.SessionLocal", return_value=mock_session), \
+             patch("domain.connection.SessionLocal", return_value=mock_session), \
              patch("scheduler.tasks.fetch_steam_price"), \
              patch("scheduler.tasks.backfill_history_task") as mock_backfill:
             result = poll_container_prices_task.run()
@@ -254,8 +254,8 @@ class TestCleanupOldHistoryTask:
         mock_session.__enter__ = MagicMock(return_value=mock_db)
         mock_session.__exit__ = MagicMock(return_value=False)
 
-        with patch("database.connection.SessionLocal", return_value=mock_session), \
-             patch("database.postgres_repo.PostgresRepository", return_value=mock_repo):
+        with patch("domain.connection.SessionLocal", return_value=mock_session), \
+             patch("domain.postgres_repo.PostgresRepository", return_value=mock_repo):
             result = cleanup_old_history_task.run()
 
         assert result["status"] == "ok"
@@ -275,7 +275,7 @@ class TestCleanupOldHistoryTask:
         mock_session.__enter__ = MagicMock(side_effect=RuntimeError("DB down"))
         mock_session.__exit__ = MagicMock(return_value=False)
 
-        with patch("database.connection.SessionLocal", return_value=mock_session):
+        with patch("domain.connection.SessionLocal", return_value=mock_session):
             with pytest.raises(Retry):
                 cleanup_old_history_task.run.__func__(mock_self)
 
@@ -401,7 +401,7 @@ class TestBackfillHistoryTask:
         mock_session = self._make_session(containers=[mock_container])
 
         with patch("scheduler.tasks._is_stealth_blocked", return_value=False), \
-             patch("database.connection.SessionLocal", return_value=mock_session), \
+             patch("domain.connection.SessionLocal", return_value=mock_session), \
              patch("ingestion.steam.client.SteamMarketClient", side_effect=RuntimeError("no cookie")):
             result = backfill_history_task.run()
 
@@ -415,7 +415,7 @@ class TestBackfillHistoryTask:
         mock_session = self._make_session(containers=[])
 
         with patch("scheduler.tasks._is_stealth_blocked", return_value=False), \
-             patch("database.connection.SessionLocal", return_value=mock_session):
+             patch("domain.connection.SessionLocal", return_value=mock_session):
             result = backfill_history_task.run()
 
         assert result["status"] == "ok"
@@ -441,7 +441,7 @@ class TestBackfillHistoryTask:
         mock_steam = MagicMock()
 
         with patch("scheduler.tasks._is_stealth_blocked", return_value=False), \
-             patch("database.connection.SessionLocal", return_value=mock_session), \
+             patch("domain.connection.SessionLocal", return_value=mock_session), \
              patch("ingestion.steam.client.SteamMarketClient", return_value=mock_steam):
             result = backfill_history_task.run()
 
@@ -476,7 +476,7 @@ class TestBackfillHistoryTask:
         mock_steam = MagicMock()
 
         with patch("scheduler.tasks._is_stealth_blocked", return_value=False), \
-             patch("database.connection.SessionLocal", return_value=mock_session), \
+             patch("domain.connection.SessionLocal", return_value=mock_session), \
              patch("ingestion.steam.client.SteamMarketClient", return_value=mock_steam), \
              patch("scheduler.tasks._trigger_stealth_block") as mock_block, \
              patch("ingestion.steam.formatter.to_api_name", return_value="Horizon+Case"), \

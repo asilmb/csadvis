@@ -15,10 +15,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from database.repositories import SqlAlchemyInventoryRepository
+from domain.sql_repositories import SqlAlchemyInventoryRepository
 from domain.repositories import InventoryRepository
 from domain.value_objects import Amount
-from services.portfolio import get_balance_data
+from domain.portfolio import get_balance_data
 
 # ─── Helpers / Fakes ──────────────────────────────────────────────────────────
 
@@ -196,7 +196,7 @@ class TestGetBalanceDataWithRepo:
         )
         inventory = [{"market_hash_name": "Clutch Case", "count": 2}]
 
-        with patch("services.portfolio.get_snapshots", return_value=[]):
+        with patch("domain.portfolio.get_snapshots", return_value=[]):
             result = get_balance_data(5000.0, inventory, repo=repo)
 
         assert result["inventory"] == 2000.0   # 2 × 1000₸
@@ -207,7 +207,7 @@ class TestGetBalanceDataWithRepo:
         repo = FakeInventoryRepository(items=[])
         snapshots = [{"date": "2026-03-01", "wallet": 4000.0, "inventory": 0.0, "total": 4000.0}]
 
-        with patch("services.portfolio.get_snapshots", return_value=snapshots):
+        with patch("domain.portfolio.get_snapshots", return_value=snapshots):
             result = get_balance_data(5000.0, None, repo=repo)
 
         assert result["delta"] == pytest.approx(1000.0)
@@ -215,7 +215,7 @@ class TestGetBalanceDataWithRepo:
     def test_empty_inventory_data_returns_zero_inventory(self):
         repo = FakeInventoryRepository(items=[])
 
-        with patch("services.portfolio.get_snapshots", return_value=[]):
+        with patch("domain.portfolio.get_snapshots", return_value=[]):
             result = get_balance_data(3000.0, None, repo=repo)
 
         assert result["inventory"] == 0.0
@@ -225,14 +225,14 @@ class TestGetBalanceDataWithRepo:
         repo = FakeInventoryRepository(items=[])  # no prices
         inventory = [{"market_hash_name": "Unknown Case", "count": 5}]
 
-        with patch("services.portfolio.get_snapshots", return_value=[]):
+        with patch("domain.portfolio.get_snapshots", return_value=[]):
             result = get_balance_data(1000.0, inventory, repo=repo)
 
         assert result["inventory"] == 0.0
 
     def test_no_repo_falls_back_to_get_portfolio_data(self):
         """Backward-compat: no repo arg → calls get_portfolio_data() as before."""
-        with patch("services.portfolio.get_portfolio_data", return_value={}) as mock_gpd, \
-             patch("services.portfolio.get_snapshots", return_value=[]):
+        with patch("domain.portfolio.get_portfolio_data", return_value={}) as mock_gpd, \
+             patch("domain.portfolio.get_snapshots", return_value=[]):
             get_balance_data(1000.0, None)
         mock_gpd.assert_called_once()

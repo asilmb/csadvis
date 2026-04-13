@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from scraper.db_writer import write_new_containers
-from scraper.steam_market_scraper import ScrapedContainer, ScrapedItem, _resolve_container_type
+from scrapper.db_writer import write_new_containers
+from scrapper.steam_market_scraper import ScrapedContainer, ScrapedItem, _resolve_container_type
 
 # ─── _resolve_container_type ──────────────────────────────────────────────────
 
@@ -178,7 +178,7 @@ class TestScraperState:
         return r
 
     def test_needs_run_true_when_never_run(self) -> None:
-        import scraper.state as st
+        import scrapper.state as st
 
         with patch.object(st, "get_redis", return_value=self._make_redis(None)):
             assert st.needs_run() is True
@@ -186,7 +186,7 @@ class TestScraperState:
     def test_needs_run_false_when_already_today(self) -> None:
         from datetime import date
 
-        import scraper.state as st
+        import scrapper.state as st
 
         today = date.today().isoformat()
         with patch.object(st, "get_redis", return_value=self._make_redis(today)):
@@ -195,7 +195,7 @@ class TestScraperState:
     def test_needs_run_true_when_yesterday(self) -> None:
         from datetime import date, timedelta
 
-        import scraper.state as st
+        import scrapper.state as st
 
         yesterday = (date.today() - timedelta(days=1)).isoformat()
         with patch.object(st, "get_redis", return_value=self._make_redis(yesterday)):
@@ -204,7 +204,7 @@ class TestScraperState:
     def test_mark_done_saves_today(self) -> None:
         from datetime import date
 
-        import scraper.state as st
+        import scrapper.state as st
 
         mock_redis = MagicMock()
         with patch.object(st, "get_redis", return_value=mock_redis):
@@ -221,12 +221,12 @@ class TestEarliestDate:
         return {"timestamp": ts, "price": 1.0}
 
     def test_returns_none_for_empty(self) -> None:
-        from engine.portfolio_advisor import _earliest_date
+        from domain.portfolio_advisor import _earliest_date
 
         assert _earliest_date([]) is None
 
     def test_returns_single_date(self) -> None:
-        from engine.portfolio_advisor import _earliest_date
+        from domain.portfolio_advisor import _earliest_date
 
         result = _earliest_date([self._h("2023-01-15 12:00")])
         assert result is not None
@@ -235,7 +235,7 @@ class TestEarliestDate:
         assert result.day == 15
 
     def test_returns_earliest_of_multiple(self) -> None:
-        from engine.portfolio_advisor import _earliest_date
+        from domain.portfolio_advisor import _earliest_date
 
         history = [
             self._h("2023-06-01 00:00"),
@@ -247,7 +247,7 @@ class TestEarliestDate:
         assert result.year == 2022
 
     def test_skips_malformed_timestamps(self) -> None:
-        from engine.portfolio_advisor import _earliest_date
+        from domain.portfolio_advisor import _earliest_date
 
         history = [
             {"timestamp": "not-a-date", "price": 1.0},
@@ -258,13 +258,13 @@ class TestEarliestDate:
         assert result.year == 2023
 
     def test_all_malformed_returns_none(self) -> None:
-        from engine.portfolio_advisor import _earliest_date
+        from domain.portfolio_advisor import _earliest_date
 
         history = [{"timestamp": "bad", "price": 1.0}]
         assert _earliest_date(history) is None
 
     def test_supports_iso_format(self) -> None:
-        from engine.portfolio_advisor import _earliest_date
+        from domain.portfolio_advisor import _earliest_date
 
         result = _earliest_date([{"timestamp": "2021-05-20T08:30:00", "price": 1.0}])
         assert result is not None

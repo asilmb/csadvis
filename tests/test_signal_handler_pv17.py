@@ -39,9 +39,9 @@ class TestSignalHandlerPV17:
     # ── notify_super_deal ──────────────────────────────────────────────────────
 
     def test_super_deal_calls_log_event(self):
-        with patch("services.signal_handler.log_event") as mock_log, \
-             patch("services.signal_handler.dispatch"):
-            from services.signal_handler import notify_super_deal
+        with patch("infra.signal_handler.log_event") as mock_log, \
+             patch("infra.signal_handler.dispatch"):
+            from infra.signal_handler import notify_super_deal
             notify_super_deal(SuperDealDetected(
                 timestamp=_now(),
                 item_name="Recoil Case",
@@ -55,9 +55,9 @@ class TestSignalHandlerPV17:
         assert "Recoil Case" in msg
 
     def test_super_deal_calls_dispatch(self):
-        with patch("services.signal_handler.log_event"), \
-             patch("services.signal_handler.dispatch") as mock_dispatch:
-            from services.signal_handler import notify_super_deal
+        with patch("infra.signal_handler.log_event"), \
+             patch("infra.signal_handler.dispatch") as mock_dispatch:
+            from infra.signal_handler import notify_super_deal
             notify_super_deal(SuperDealDetected(
                 timestamp=_now(),
                 item_name="Fracture Case",
@@ -72,9 +72,9 @@ class TestSignalHandlerPV17:
     # ── notify_liquidity_warning ───────────────────────────────────────────────
 
     def test_liquidity_warning_calls_log_event(self):
-        with patch("services.signal_handler.log_event") as mock_log, \
-             patch("services.signal_handler.dispatch"):
-            from services.signal_handler import notify_liquidity_warning
+        with patch("infra.signal_handler.log_event") as mock_log, \
+             patch("infra.signal_handler.dispatch"):
+            from infra.signal_handler import notify_liquidity_warning
             notify_liquidity_warning(LiquidityWarning(
                 timestamp=_now(), item_name="Danger Zone Case", payload="thin volume"
             ))
@@ -84,9 +84,9 @@ class TestSignalHandlerPV17:
         assert "LIQUIDITY" in msg
 
     def test_liquidity_warning_no_dispatch(self):
-        with patch("services.signal_handler.log_event"), \
-             patch("services.signal_handler.dispatch") as mock_dispatch:
-            from services.signal_handler import notify_liquidity_warning
+        with patch("infra.signal_handler.log_event"), \
+             patch("infra.signal_handler.dispatch") as mock_dispatch:
+            from infra.signal_handler import notify_liquidity_warning
             notify_liquidity_warning(LiquidityWarning(
                 timestamp=_now(), item_name="Danger Zone Case", payload="thin volume"
             ))
@@ -95,9 +95,9 @@ class TestSignalHandlerPV17:
     # ── notify_price_alert ─────────────────────────────────────────────────────
 
     def test_price_alert_calls_log_event(self):
-        with patch("services.signal_handler.log_event") as mock_log, \
-             patch("services.signal_handler.dispatch"):
-            from services.signal_handler import notify_price_alert
+        with patch("infra.signal_handler.log_event") as mock_log, \
+             patch("infra.signal_handler.dispatch"):
+            from infra.signal_handler import notify_price_alert
             notify_price_alert(PriceAlert(
                 timestamp=_now(), item_name="Horizon Case",
                 payload={"current_price": 3000.0, "threshold": 3500.0, "direction": "below"},
@@ -108,9 +108,9 @@ class TestSignalHandlerPV17:
         assert "PRICE ALERT" in msg
 
     def test_price_alert_no_dispatch(self):
-        with patch("services.signal_handler.log_event"), \
-             patch("services.signal_handler.dispatch") as mock_dispatch:
-            from services.signal_handler import notify_price_alert
+        with patch("infra.signal_handler.log_event"), \
+             patch("infra.signal_handler.dispatch") as mock_dispatch:
+            from infra.signal_handler import notify_price_alert
             notify_price_alert(PriceAlert(
                 timestamp=_now(), item_name="Horizon Case",
                 payload={"current_price": 3000.0, "threshold": 3500.0, "direction": "below"},
@@ -120,9 +120,9 @@ class TestSignalHandlerPV17:
     # ── notify_auth_error ──────────────────────────────────────────────────────
 
     def test_auth_error_calls_log_event_error(self):
-        with patch("services.signal_handler.log_event") as mock_log, \
-             patch("services.signal_handler.dispatch"):
-            from services.signal_handler import notify_auth_error
+        with patch("infra.signal_handler.log_event") as mock_log, \
+             patch("infra.signal_handler.dispatch"):
+            from infra.signal_handler import notify_auth_error
             notify_auth_error(AuthError(
                 timestamp=_now(),
                 item_name="Recoil Case",
@@ -136,9 +136,9 @@ class TestSignalHandlerPV17:
         assert "Recoil Case" in msg
 
     def test_auth_error_calls_dispatch(self):
-        with patch("services.signal_handler.log_event"), \
-             patch("services.signal_handler.dispatch") as mock_dispatch:
-            from services.signal_handler import notify_auth_error
+        with patch("infra.signal_handler.log_event"), \
+             patch("infra.signal_handler.dispatch") as mock_dispatch:
+            from infra.signal_handler import notify_auth_error
             notify_auth_error(AuthError(
                 timestamp=_now(),
                 item_name="Fracture Case",
@@ -152,9 +152,9 @@ class TestSignalHandlerPV17:
         assert payload["item"] == "Fracture Case"
 
     def test_auth_error_403_also_dispatches(self):
-        with patch("services.signal_handler.log_event"), \
-             patch("services.signal_handler.dispatch") as mock_dispatch:
-            from services.signal_handler import notify_auth_error
+        with patch("infra.signal_handler.log_event"), \
+             patch("infra.signal_handler.dispatch") as mock_dispatch:
+            from infra.signal_handler import notify_auth_error
             notify_auth_error(AuthError(
                 timestamp=_now(),
                 item_name="CS20 Case",

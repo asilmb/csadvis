@@ -37,7 +37,7 @@ Covers:
 
 from __future__ import annotations
 
-from frontend.url_generator import get_inspect_url, get_inventory_url, get_market_url
+from ui.url_generator import get_inspect_url, get_inventory_url, get_market_url
 
 # ─── get_market_url ───────────────────────────────────────────────────────────
 

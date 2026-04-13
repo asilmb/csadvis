@@ -17,8 +17,8 @@ LOG_PATH = Path(os.getenv("LOG_DIR", str(_PROJECT_ROOT / "storage" / "logs")))
 def cmd_start(args):
     """Запуск API и Dashboard."""
     import uvicorn
-    from database.connection import init_db
-    from frontend.app import create_dash_app
+    from domain.connection import init_db
+    from ui.app import create_dash_app
     
     configure_logging(log_level="INFO", log_dir=LOG_PATH)
     init_db()
@@ -49,7 +49,7 @@ def cmd_worker(args):
 
 def cmd_dashboard(args):
     """Только Dashboard."""
-    from frontend.app import create_dash_app
+    from ui.app import create_dash_app
     configure_logging(log_level="INFO", log_dir=LOG_PATH)
     app = create_dash_app()
     app.run(host="0.0.0.0", port=8050, debug=False)

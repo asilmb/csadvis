@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ingestion.steam_transactions import (
+from scrapper.steam_transactions import (
     _parse_history_html,
     compute_annual_pnl,
     fetch_market_history,

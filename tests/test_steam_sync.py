@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from services.steam_sync import (
+from scrapper.steam_sync import (
     InventoryResult,
     TransactionsResult,
     WalletResult,

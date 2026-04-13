@@ -19,16 +19,16 @@ def startup_auth_check(settings) -> bool:
         print("[UP] WARNING: STEAM_LOGIN_SECURE not set — add it via the dashboard modal.")
         return False
     try:
-        from ingestion.steam_wallet import fetch_wallet_balance
+        from scrapper.steam_wallet import fetch_wallet_balance
 
         _bal, _msg = fetch_wallet_balance()
         if _bal is None and any(k in _msg.lower() for k in ("403", "устарел", "expired", "cookie")):
             print("[UP] WARNING: Steam cookie expired — dashboard will prompt for update.")
             try:
-                from database.connection import SessionLocal, init_db
+                from domain.connection import SessionLocal, init_db
 
                 init_db()
-                from database.repositories import set_cookie_status
+                from domain.sql_repositories import set_cookie_status
 
                 with SessionLocal() as _db:
                     set_cookie_status(_db, "EXPIRED")

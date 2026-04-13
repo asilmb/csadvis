@@ -18,10 +18,10 @@ def cmd_backfill(args) -> None:
 
     from sqlalchemy import func
 
-    from database.connection import SessionLocal, init_db
-    from database.models import DimContainer, FactContainerPrice
-    from ingestion.steam.client import SteamMarketClient
-    from ingestion.steam.logic import fetch_all as steam_fetch_all
+    from domain.connection import SessionLocal, init_db
+    from domain.models import DimContainer, FactContainerPrice
+    from scrapper.steam.client import SteamMarketClient
+    from scrapper.steam.logic import fetch_all as steam_fetch_all
 
     force: bool = getattr(args, "force", False)
     missing_only: bool = getattr(args, "missing", False)
@@ -133,10 +133,10 @@ def cmd_scrape(args) -> None:
     """Run the Steam Market container scraper right now (ignores the date check)."""
     import asyncio
 
-    from database.connection import SessionLocal, init_db
-    from scraper.db_writer import write_new_containers
-    from scraper.state import mark_done
-    from scraper.steam_market_scraper import scrape_all_containers
+    from domain.connection import SessionLocal, init_db
+    from scrapper.db_writer import write_new_containers
+    from scrapper.state import mark_done
+    from scrapper.steam_market_scraper import scrape_all_containers
 
     init_db()
     logger.info("Running scraper ...")
@@ -188,7 +188,7 @@ def cmd_events_refresh(args) -> None:
     # Validate the downloaded YAML before writing
     import tempfile
 
-    from engine.event_loader import load_events
+    from domain.event_loader import load_events
 
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".yaml", delete=False, encoding="utf-8"
@@ -213,7 +213,7 @@ def cmd_events_refresh(args) -> None:
 
 def cmd_db_seed(args) -> None:
     """Re-run the static data seeder (safe to run multiple times)."""
-    from database.connection import SessionLocal, init_db
+    from domain.connection import SessionLocal, init_db
     from seed.data import seed_database
 
     init_db()
@@ -226,8 +226,8 @@ def cmd_db_prune(args) -> None:
     """Delete price snapshots older than 2 years to keep DB size manageable."""
     from datetime import UTC, datetime, timedelta
 
-    from database.connection import SessionLocal, init_db
-    from database.models import FactContainerPrice
+    from domain.connection import SessionLocal, init_db
+    from domain.models import FactContainerPrice
 
     cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=730)
     print(f"\n  Pruning price records older than {cutoff.strftime('%Y-%m-%d')} ...")
@@ -254,8 +254,8 @@ def cmd_db_cleanup(args) -> None:
     Deletes COMPLETED/FAILED tasks older than 24 h, EventLog rows older than
     7 days (protecting ERROR/CRITICAL within 48 h), then runs VACUUM.
     """
-    from database.connection import init_db
-    from services.maintenance import MaintenanceService
+    from domain.connection import init_db
+    from infra.maintenance import MaintenanceService
 
     init_db()
     svc = MaintenanceService()
@@ -282,8 +282,8 @@ def cmd_db_reset(args) -> None:
 
     from sqlalchemy import text
 
-    from database.connection import SessionLocal, engine, init_db
-    from database.models import Base
+    from domain.connection import SessionLocal, engine, init_db
+    from domain.models import Base
     from seed.data import seed_database
 
     Base.metadata.drop_all(bind=engine)

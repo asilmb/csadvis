@@ -36,7 +36,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from database.models import Base, EventLog, TaskQueue, TaskStatus
+from domain.models import Base, EventLog, TaskQueue, TaskStatus
 
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -114,10 +114,10 @@ def _count_events(engine) -> int:
 
 class TestCleanupTaskQueue:
     def _run(self, engine, **kwargs) -> int:
-        from services.maintenance import MaintenanceService
+        from infra.maintenance import MaintenanceService
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr("database.connection.SessionLocal", _make_cm(engine), raising=False)
+            mp.setattr("domain.connection.SessionLocal", _make_cm(engine), raising=False)
             return MaintenanceService().cleanup_task_queue(**kwargs)
 
     def test_deletes_completed_old_tasks(self, engine, db):
@@ -184,10 +184,10 @@ class TestCleanupTaskQueue:
 
 class TestCleanupEventLog:
     def _run(self, engine, **kwargs) -> int:
-        from services.maintenance import MaintenanceService
+        from infra.maintenance import MaintenanceService
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr("database.connection.SessionLocal", _make_cm(engine), raising=False)
+            mp.setattr("domain.connection.SessionLocal", _make_cm(engine), raising=False)
             return MaintenanceService().cleanup_event_log(**kwargs)
 
     def test_deletes_old_info_rows(self, engine, db):
@@ -291,11 +291,11 @@ class TestVacuum:
 
     def test_vacuum_executes_without_error(self):
         """VACUUM statement is issued via engine.connect()."""
-        from services.maintenance import MaintenanceService
+        from infra.maintenance import MaintenanceService
 
         mock_conn = self._mock_conn()
 
-        with patch("database.connection.engine") as mock_engine:
+        with patch("domain.connection.engine") as mock_engine:
             mock_engine.connect.return_value = mock_conn
             MaintenanceService().vacuum()
 
@@ -305,11 +305,11 @@ class TestVacuum:
 
     def test_vacuum_uses_autocommit_isolation(self):
         """vacuum() must request AUTOCOMMIT so PostgreSQL never wraps it in a transaction."""
-        from services.maintenance import MaintenanceService
+        from infra.maintenance import MaintenanceService
 
         mock_conn = self._mock_conn()
 
-        with patch("database.connection.engine") as mock_engine:
+        with patch("domain.connection.engine") as mock_engine:
             mock_engine.connect.return_value = mock_conn
             MaintenanceService().vacuum()
 
@@ -317,12 +317,12 @@ class TestVacuum:
 
     def test_vacuum_uses_engine_connect_not_session(self):
         """VACUUM must use engine.connect(), not SessionLocal — no transaction wrapper."""
-        from services.maintenance import MaintenanceService
+        from infra.maintenance import MaintenanceService
 
         mock_conn = self._mock_conn()
 
-        with patch("database.connection.engine") as mock_engine, \
-             patch("database.connection.SessionLocal") as mock_session:
+        with patch("domain.connection.engine") as mock_engine, \
+             patch("domain.connection.SessionLocal") as mock_session:
             mock_engine.connect.return_value = mock_conn
             MaintenanceService().vacuum()
 
@@ -335,7 +335,7 @@ class TestVacuum:
 
 class TestRunAll:
     def test_calls_all_three_steps_in_order(self):
-        from services.maintenance import MaintenanceService
+        from infra.maintenance import MaintenanceService
 
         calls: list[str] = []
         svc = MaintenanceService()
@@ -362,7 +362,7 @@ class TestRunAll:
         assert result.events_deleted == 12
 
     def test_returns_cleanup_result(self):
-        from services.maintenance import CleanupResult, MaintenanceService
+        from infra.maintenance import CleanupResult, MaintenanceService
 
         svc = MaintenanceService()
         svc.cleanup_task_queue = lambda **kw: 3
@@ -376,7 +376,7 @@ class TestRunAll:
 
     def test_default_params_forwarded(self):
         """run_all() passes its args through to the individual methods."""
-        from services.maintenance import MaintenanceService
+        from infra.maintenance import MaintenanceService
 
         received: dict = {}
 

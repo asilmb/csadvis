@@ -29,14 +29,14 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from database.models import (
+from domain.models import (
     Base,
     ContainerType,
     DimContainer,
     DimUserPosition,
     FactContainerPrice,
 )
-from database.repositories import SqlAlchemyInventoryRepository
+from domain.sql_repositories import SqlAlchemyInventoryRepository
 
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────

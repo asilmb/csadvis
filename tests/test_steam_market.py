@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from ingestion.steam.formatter import normalize_market_hash_name
-from ingestion.steam.parser import _parse_steam_price
+from scrapper.steam.formatter import normalize_market_hash_name
+from scrapper.steam.parser import _parse_steam_price
 
 
 class TestParseSteamPriceEmpty:

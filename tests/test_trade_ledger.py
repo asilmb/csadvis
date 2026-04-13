@@ -43,9 +43,9 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from database.models import Base
-from database.repositories import PositionDTO, SqlAlchemyPositionRepository
-from services.trade_ledger import STEAM_NET_MULTIPLIER, TradeService
+from domain.models import Base
+from domain.sql_repositories import PositionDTO, SqlAlchemyPositionRepository
+from domain.trade_ledger import STEAM_NET_MULTIPLIER, TradeService
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -273,7 +273,7 @@ class TestGetPortfolioSummary:
             db.commit()
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr("database.connection.SessionLocal", _CM, raising=False)
+            mp.setattr("domain.connection.SessionLocal", _CM, raising=False)
             svc = TradeService()
             return svc.get_portfolio_summary(price_map=price_map)
 

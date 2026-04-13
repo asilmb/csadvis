@@ -22,8 +22,8 @@ import os
 from pathlib import Path
 
 from config import settings
-from database.connection import SessionLocal, init_db
-from frontend.app import create_dash_app
+from domain.connection import SessionLocal, init_db
+from ui.app import create_dash_app
 from seed.data import seed_database
 
 _log_dir = Path(os.getenv("LOG_DIR", "logs"))

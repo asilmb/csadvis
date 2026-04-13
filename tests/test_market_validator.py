@@ -26,13 +26,13 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from database.models import (
+from domain.models import (
     Base,
     ContainerType,
     DimContainer,
     FactContainerPrice,
 )
-from database.repositories import SqlAlchemyPriceRepository
+from domain.sql_repositories import SqlAlchemyPriceRepository
 
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -185,7 +185,7 @@ class TestGetPriceHistory:
 
 class TestValidateSuperDealCandidate:
     def test_empty_history_returns_none(self):
-        from engine.portfolio_advisor import validate_super_deal_candidate
+        from domain.portfolio_advisor import validate_super_deal_candidate
 
         result = validate_super_deal_candidate(
             container_name="Test Case",
@@ -198,7 +198,7 @@ class TestValidateSuperDealCandidate:
 
     def test_no_recent_prices_returns_none(self):
         """History has only old rows — nothing in 30-day window."""
-        from engine.portfolio_advisor import validate_super_deal_candidate
+        from domain.portfolio_advisor import validate_super_deal_candidate
 
         old = _now() - timedelta(days=60)
         history = [
@@ -219,7 +219,7 @@ class TestValidateSuperDealCandidate:
         We just verify the call doesn't raise and returns None (criteria not met for
         flat price history with no anomaly).
         """
-        from engine.portfolio_advisor import validate_super_deal_candidate
+        from domain.portfolio_advisor import validate_super_deal_candidate
 
         base = 5000.0
         history = []

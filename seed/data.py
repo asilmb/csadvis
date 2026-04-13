@@ -18,7 +18,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from database.models import ContainerType, DimContainer
+from domain.models import ContainerType, DimContainer
 
 logger = logging.getLogger(__name__)
 

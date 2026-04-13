@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-from services.portfolio import compute_pnl
+from domain.portfolio import compute_pnl
 
 # ── compute_pnl ───────────────────────────────────────────────────────────────
 
@@ -54,7 +54,7 @@ class TestComputePnl:
         from config import Settings
 
         custom = Settings(steam_fee_divisor=1.10, steam_fee_fixed=10.0)
-        with patch("services.portfolio.settings", custom):
+        with patch("domain.portfolio.settings", custom):
             result = compute_pnl(sell_price=960.0, buy_price=480.0)
             expected = 960.0 / 1.10 - 10.0 - 480.0
             assert abs(result - expected) < 0.01
