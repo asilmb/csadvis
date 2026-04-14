@@ -67,24 +67,24 @@ def _mock_redis(stored: dict | None = None) -> MagicMock:
 class TestBalancePersistence:
     def test_round_trip(self) -> None:
         redis = _mock_redis()
-        with patch("ingestion.steam_wallet.get_redis", return_value=redis):
+        with patch("scrapper.steam_wallet.get_redis", return_value=redis):
             save_balance(50000.0)
             assert get_saved_balance() == pytest.approx(50000.0)
 
     def test_returns_none_when_key_missing(self) -> None:
         redis = _mock_redis()
-        with patch("ingestion.steam_wallet.get_redis", return_value=redis):
+        with patch("scrapper.steam_wallet.get_redis", return_value=redis):
             assert get_saved_balance() is None
 
     def test_returns_none_on_redis_error(self) -> None:
         redis = MagicMock()
         redis.get.side_effect = Exception("Redis unavailable")
-        with patch("ingestion.steam_wallet.get_redis", return_value=redis):
+        with patch("scrapper.steam_wallet.get_redis", return_value=redis):
             assert get_saved_balance() is None
 
     def test_saves_correct_value(self) -> None:
         redis = _mock_redis()
-        with patch("ingestion.steam_wallet.get_redis", return_value=redis):
+        with patch("scrapper.steam_wallet.get_redis", return_value=redis):
             save_balance(99999.0)
         redis.set.assert_called_once_with("cs2:wallet:balance", "99999.0")
 
@@ -112,7 +112,7 @@ def _settings_with_cookie(cookie: str = "valid_cookie") -> MagicMock:
 
 class TestFetchWalletBalance:
     def test_no_cookie_returns_none(self) -> None:
-        with patch("ingestion.steam_wallet.settings", _settings_with_cookie("")):
+        with patch("scrapper.steam_wallet.settings", _settings_with_cookie("")):
             balance, msg = fetch_wallet_balance()
         assert balance is None
         assert msg == "NO_COOKIE"
@@ -120,8 +120,8 @@ class TestFetchWalletBalance:
     def test_parses_market_wallet_span(self) -> None:
         html = '<span id="marketWalletBalanceAmount">12 345 ₸</span>'
         with (
-            patch("ingestion.steam_wallet.settings", _settings_with_cookie()),
-            patch("ingestion.steam_wallet.httpx.get", return_value=_mock_response(html)),
+            patch("scrapper.steam_wallet.settings", _settings_with_cookie()),
+            patch("scrapper.steam_wallet.httpx.get", return_value=_mock_response(html)),
         ):
             balance, msg = fetch_wallet_balance()
         assert balance == pytest.approx(12345.0)
@@ -130,16 +130,16 @@ class TestFetchWalletBalance:
     def test_parses_large_balance(self) -> None:
         html = '<span id="marketWalletBalanceAmount">1 234 567 ₸</span>'
         with (
-            patch("ingestion.steam_wallet.settings", _settings_with_cookie()),
-            patch("ingestion.steam_wallet.httpx.get", return_value=_mock_response(html)),
+            patch("scrapper.steam_wallet.settings", _settings_with_cookie()),
+            patch("scrapper.steam_wallet.httpx.get", return_value=_mock_response(html)),
         ):
             balance, _msg = fetch_wallet_balance()
         assert balance == pytest.approx(1234567.0)
 
     def test_http_403_returns_none(self) -> None:
         with (
-            patch("ingestion.steam_wallet.settings", _settings_with_cookie()),
-            patch("ingestion.steam_wallet.httpx.get", return_value=_mock_response("", 403)),
+            patch("scrapper.steam_wallet.settings", _settings_with_cookie()),
+            patch("scrapper.steam_wallet.httpx.get", return_value=_mock_response("", 403)),
         ):
             balance, msg = fetch_wallet_balance()
         assert balance is None
@@ -150,16 +150,16 @@ class TestFetchWalletBalance:
 
         html = "<html><body>Not logged in</body></html>"
         with (
-            patch("ingestion.steam_wallet.settings", _settings_with_cookie()),
-            patch("ingestion.steam_wallet.httpx.get", return_value=_mock_response(html)),
+            patch("scrapper.steam_wallet.settings", _settings_with_cookie()),
+            patch("scrapper.steam_wallet.httpx.get", return_value=_mock_response(html)),
         ):
             with pytest.raises(AuthError, match="Balance element not found"):
                 fetch_wallet_balance()
 
     def test_network_error_returns_none(self) -> None:
         with (
-            patch("ingestion.steam_wallet.settings", _settings_with_cookie()),
-            patch("ingestion.steam_wallet.httpx.get", side_effect=Exception("Connection refused")),
+            patch("scrapper.steam_wallet.settings", _settings_with_cookie()),
+            patch("scrapper.steam_wallet.httpx.get", side_effect=Exception("Connection refused")),
         ):
             balance, msg = fetch_wallet_balance()
         assert balance is None
@@ -168,8 +168,8 @@ class TestFetchWalletBalance:
     def test_double_quoted_id_attribute(self) -> None:
         html = "<span id='marketWalletBalanceAmount'>99 000 ₸</span>"
         with (
-            patch("ingestion.steam_wallet.settings", _settings_with_cookie()),
-            patch("ingestion.steam_wallet.httpx.get", return_value=_mock_response(html)),
+            patch("scrapper.steam_wallet.settings", _settings_with_cookie()),
+            patch("scrapper.steam_wallet.httpx.get", return_value=_mock_response(html)),
         ):
             balance, _msg = fetch_wallet_balance()
         assert balance == pytest.approx(99000.0)

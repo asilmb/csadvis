@@ -32,12 +32,12 @@ import statistics
 from datetime import UTC, datetime, timedelta
 
 from config import settings
-from domain.events import SuperDealDetected
-from domain.services import SuperDealDomainService
-from domain.specifications import PriceWithinRange, ZScoreBelow
-from domain.value_objects import Amount, ROI
-from domain.correlation import check_portfolio_correlation, compute_correlation_matrix
-from domain.wall_filter import compute_wall_metrics, get_best_buy_order
+from src.domain.events import SuperDealDetected
+from src.domain.services import SuperDealDomainService
+from src.domain.specifications import PriceWithinRange, ZScoreBelow
+from src.domain.value_objects import Amount, ROI
+from src.domain.correlation import check_portfolio_correlation, compute_correlation_matrix
+from src.domain.wall_filter import compute_wall_metrics, get_best_buy_order
 
 logger = logging.getLogger(__name__)
 

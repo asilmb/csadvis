@@ -15,8 +15,8 @@ from pathlib import Path
 # Allow running from any working directory
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from domain.connection import SessionLocal, init_db  # noqa: E402
-from domain.models import DimContainer, FactContainerPrice  # noqa: E402
+from src.domain.connection import SessionLocal, init_db  # noqa: E402
+from src.domain.models import DimContainer, FactContainerPrice  # noqa: E402
 
 
 def _to_float(value) -> tuple[float | None, bool]:

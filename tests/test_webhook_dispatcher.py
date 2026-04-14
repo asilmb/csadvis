@@ -24,27 +24,27 @@ class TestDispatch:
         """dispatch() must not spawn a thread when webhook_url is empty."""
         import logging
 
-        from services import webhook_dispatcher
+        from infra import webhook_dispatcher
 
         with patch.object(
             webhook_dispatcher,
             "_post",
             wraps=webhook_dispatcher._post,
         ) as mock_post, patch(
-            "services.webhook_dispatcher.threading.Thread"
+            "infra.webhook_dispatcher.threading.Thread"
         ) as mock_thread, patch(
             "config.settings"
         ) as mock_settings:
             mock_settings.webhook_url = ""
 
-            with caplog.at_level(logging.WARNING, logger="services.webhook_dispatcher"):
+            with caplog.at_level(logging.WARNING, logger="infra.webhook_dispatcher"):
                 webhook_dispatcher.dispatch({"event": "test"})
 
             mock_thread.assert_not_called()
 
     def test_spawns_thread_when_url_configured(self):
         """dispatch() must start a daemon thread when webhook_url is set."""
-        from services import webhook_dispatcher
+        from infra import webhook_dispatcher
 
         spawned: list[threading.Thread] = []
         original_thread = threading.Thread
@@ -54,8 +54,8 @@ class TestDispatch:
             spawned.append(t)
             return t
 
-        with patch("services.webhook_dispatcher.threading.Thread", side_effect=_capture_thread), \
-             patch("services.webhook_dispatcher._post"), \
+        with patch("infra.webhook_dispatcher.threading.Thread", side_effect=_capture_thread), \
+             patch("infra.webhook_dispatcher._post"), \
              patch("config.settings") as mock_settings:
             mock_settings.webhook_url = "https://example.com/webhook"
             webhook_dispatcher.dispatch({"event": "super_deal"})
@@ -65,7 +65,7 @@ class TestDispatch:
 
     def test_thread_receives_correct_args(self):
         """Thread is spawned with (_post, url, payload) args."""
-        from services import webhook_dispatcher
+        from infra import webhook_dispatcher
 
         captured: list[dict] = []
 
@@ -77,7 +77,7 @@ class TestDispatch:
             return t
 
         with patch(
-            "services.webhook_dispatcher.threading.Thread",
+            "infra.webhook_dispatcher.threading.Thread",
             side_effect=_fake_thread,
         ), patch("config.settings") as mock_settings:
             mock_settings.webhook_url = "https://hooks.example.com"
@@ -125,7 +125,7 @@ class TestPost:
         mock_client.post.side_effect = httpx.ConnectError("connection refused")
 
         with patch("httpx.Client", return_value=mock_client), \
-             caplog.at_level(logging.WARNING, logger="services.webhook_dispatcher"):
+             caplog.at_level(logging.WARNING, logger="infra.webhook_dispatcher"):
             _post("https://dead.example.com/hook", {"event": "test"})
 
         assert any("POST" in r.message and "failed" in r.message for r in caplog.records)

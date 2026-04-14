@@ -10,8 +10,8 @@ Returns Amount(0) when net_proceeds <= 0 (fixed fee dominates).
 
 from __future__ import annotations
 
-from domain.services import compute_smart_buy_price
-from domain.value_objects import Amount
+from src.domain.services import compute_smart_buy_price
+from src.domain.value_objects import Amount
 
 # ─── Default fee parameters (mirror config.py defaults) ──────────────────────
 

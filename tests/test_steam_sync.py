@@ -37,8 +37,8 @@ _ITEMS = [
 
 class TestSyncWallet:
     def test_success_returns_ok_true(self):
-        with patch("ingestion.steam_wallet.fetch_wallet_balance", return_value=(5000.0, "ok")), \
-             patch("ingestion.steam_wallet.save_balance") as mock_save:
+        with patch("scrapper.steam_wallet.fetch_wallet_balance", return_value=(5000.0, "ok")), \
+             patch("scrapper.steam_wallet.save_balance") as mock_save:
             r = sync_wallet()
         assert r.ok is True
         assert r.balance == 5000.0
@@ -46,68 +46,68 @@ class TestSyncWallet:
         mock_save.assert_called_once_with(5000.0)
 
     def test_success_message_contains_balance(self):
-        with patch("ingestion.steam_wallet.fetch_wallet_balance", return_value=(5000.0, "ok")), \
-             patch("ingestion.steam_wallet.save_balance"):
+        with patch("scrapper.steam_wallet.fetch_wallet_balance", return_value=(5000.0, "ok")), \
+             patch("scrapper.steam_wallet.save_balance"):
             r = sync_wallet()
         assert "5" in r.message  # formatted KZT amount
 
     def test_success_balance_is_set(self):
-        with patch("ingestion.steam_wallet.fetch_wallet_balance", return_value=(5000.0, "ok")), \
-             patch("ingestion.steam_wallet.save_balance"):
+        with patch("scrapper.steam_wallet.fetch_wallet_balance", return_value=(5000.0, "ok")), \
+             patch("scrapper.steam_wallet.save_balance"):
             r = sync_wallet()
         assert r.balance == 5000.0
 
     def test_failure_no_cookie(self):
-        with patch("ingestion.steam_wallet.fetch_wallet_balance", return_value=(None, "NO_COOKIE")), \
-             patch("ingestion.steam_wallet.get_saved_balance", return_value=None):
+        with patch("scrapper.steam_wallet.fetch_wallet_balance", return_value=(None, "NO_COOKIE")), \
+             patch("scrapper.steam_wallet.get_saved_balance", return_value=None):
             r = sync_wallet()
         assert r.ok is False
         assert r.error_code == "NO_COOKIE"
 
     def test_failure_stale_cookie_via_403(self):
-        with patch("ingestion.steam_wallet.fetch_wallet_balance", return_value=(None, "HTTP 403")), \
-             patch("ingestion.steam_wallet.get_saved_balance", return_value=None):
+        with patch("scrapper.steam_wallet.fetch_wallet_balance", return_value=(None, "HTTP 403")), \
+             patch("scrapper.steam_wallet.get_saved_balance", return_value=None):
             r = sync_wallet()
         assert r.ok is False
         assert r.error_code == "STALE_COOKIE"
 
     def test_failure_stale_cookie_via_ustarl(self):
-        with patch("ingestion.steam_wallet.fetch_wallet_balance", return_value=(None, "cookie устарел")), \
-             patch("ingestion.steam_wallet.get_saved_balance", return_value=None):
+        with patch("scrapper.steam_wallet.fetch_wallet_balance", return_value=(None, "cookie устарел")), \
+             patch("scrapper.steam_wallet.get_saved_balance", return_value=None):
             r = sync_wallet()
         assert r.ok is False
         assert r.error_code == "STALE_COOKIE"
 
     def test_failure_network_error(self):
-        with patch("ingestion.steam_wallet.fetch_wallet_balance", return_value=(None, "Connection timeout")), \
-             patch("ingestion.steam_wallet.get_saved_balance", return_value=None):
+        with patch("scrapper.steam_wallet.fetch_wallet_balance", return_value=(None, "Connection timeout")), \
+             patch("scrapper.steam_wallet.get_saved_balance", return_value=None):
             r = sync_wallet()
         assert r.ok is False
         assert r.error_code == "NETWORK"
 
     def test_failure_returns_cached_balance(self):
-        with patch("ingestion.steam_wallet.fetch_wallet_balance", return_value=(None, "NO_COOKIE")), \
-             patch("ingestion.steam_wallet.get_saved_balance", return_value=3000.0):
+        with patch("scrapper.steam_wallet.fetch_wallet_balance", return_value=(None, "NO_COOKIE")), \
+             patch("scrapper.steam_wallet.get_saved_balance", return_value=3000.0):
             r = sync_wallet()
         assert r.ok is False
         assert r.balance == 3000.0
 
     def test_failure_no_cache_returns_none_balance(self):
-        with patch("ingestion.steam_wallet.fetch_wallet_balance", return_value=(None, "NO_COOKIE")), \
-             patch("ingestion.steam_wallet.get_saved_balance", return_value=None):
+        with patch("scrapper.steam_wallet.fetch_wallet_balance", return_value=(None, "NO_COOKIE")), \
+             patch("scrapper.steam_wallet.get_saved_balance", return_value=None):
             r = sync_wallet()
         assert r.balance is None
 
     def test_result_is_wallet_result(self):
-        with patch("ingestion.steam_wallet.fetch_wallet_balance", return_value=(5000.0, "ok")), \
-             patch("ingestion.steam_wallet.save_balance"):
+        with patch("scrapper.steam_wallet.fetch_wallet_balance", return_value=(5000.0, "ok")), \
+             patch("scrapper.steam_wallet.save_balance"):
             r = sync_wallet()
         assert isinstance(r, WalletResult)
 
     def test_save_not_called_on_failure(self):
-        with patch("ingestion.steam_wallet.fetch_wallet_balance", return_value=(None, "NO_COOKIE")), \
-             patch("ingestion.steam_wallet.get_saved_balance", return_value=None), \
-             patch("ingestion.steam_wallet.save_balance") as mock_save:
+        with patch("scrapper.steam_wallet.fetch_wallet_balance", return_value=(None, "NO_COOKIE")), \
+             patch("scrapper.steam_wallet.get_saved_balance", return_value=None), \
+             patch("scrapper.steam_wallet.save_balance") as mock_save:
             sync_wallet()
         mock_save.assert_not_called()
 
@@ -176,79 +176,79 @@ class TestSyncInventory:
 
 class TestSyncTransactions:
     def test_success_ok_true(self):
-        with patch("ingestion.steam_transactions.fetch_market_history", return_value=(_TX, "ok")), \
-             patch("ingestion.steam_transactions.compute_annual_pnl", return_value={2025: 50.0}):
+        with patch("scrapper.steam_transactions.fetch_market_history", return_value=(_TX, "ok")), \
+             patch("scrapper.steam_transactions.compute_annual_pnl", return_value={2025: 50.0}):
             r = sync_transactions()
         assert r.ok is True
 
     def test_success_buy_sell_counts(self):
-        with patch("ingestion.steam_transactions.fetch_market_history", return_value=(_TX, "ok")), \
-             patch("ingestion.steam_transactions.compute_annual_pnl", return_value={2025: 50.0}):
+        with patch("scrapper.steam_transactions.fetch_market_history", return_value=(_TX, "ok")), \
+             patch("scrapper.steam_transactions.compute_annual_pnl", return_value={2025: 50.0}):
             r = sync_transactions()
         assert r.buy_count == 2
         assert r.sell_count == 1
 
     def test_success_transactions_list(self):
-        with patch("ingestion.steam_transactions.fetch_market_history", return_value=(_TX, "ok")), \
-             patch("ingestion.steam_transactions.compute_annual_pnl", return_value={2025: 50.0}):
+        with patch("scrapper.steam_transactions.fetch_market_history", return_value=(_TX, "ok")), \
+             patch("scrapper.steam_transactions.compute_annual_pnl", return_value={2025: 50.0}):
             r = sync_transactions()
         assert r.transactions == _TX
 
     def test_success_annual_pnl_forwarded(self):
-        with patch("ingestion.steam_transactions.fetch_market_history", return_value=(_TX, "ok")), \
-             patch("ingestion.steam_transactions.compute_annual_pnl", return_value={2025: 50.0}):
+        with patch("scrapper.steam_transactions.fetch_market_history", return_value=(_TX, "ok")), \
+             patch("scrapper.steam_transactions.compute_annual_pnl", return_value={2025: 50.0}):
             r = sync_transactions()
         assert r.annual_pnl == {2025: 50.0}
 
     def test_success_message_contains_count(self):
-        with patch("ingestion.steam_transactions.fetch_market_history", return_value=(_TX, "ok")), \
-             patch("ingestion.steam_transactions.compute_annual_pnl", return_value={}):
+        with patch("scrapper.steam_transactions.fetch_market_history", return_value=(_TX, "ok")), \
+             patch("scrapper.steam_transactions.compute_annual_pnl", return_value={}):
             r = sync_transactions()
         assert "3" in r.message
 
     def test_failure_no_cookie(self):
-        with patch("ingestion.steam_transactions.fetch_market_history", return_value=(None, "NO_COOKIE")):
+        with patch("scrapper.steam_transactions.fetch_market_history", return_value=(None, "NO_COOKIE")):
             r = sync_transactions()
         assert r.ok is False
         assert r.error_code == "NO_COOKIE"
 
     def test_failure_stale_cookie_via_403(self):
-        with patch("ingestion.steam_transactions.fetch_market_history", return_value=([], "HTTP 403 Forbidden")):
+        with patch("scrapper.steam_transactions.fetch_market_history", return_value=([], "HTTP 403 Forbidden")):
             r = sync_transactions()
         assert r.ok is False
         assert r.error_code == "STALE_COOKIE"
 
     def test_failure_stale_cookie_via_ustarl(self):
-        with patch("ingestion.steam_transactions.fetch_market_history", return_value=([], "сессия устарела")):
+        with patch("scrapper.steam_transactions.fetch_market_history", return_value=([], "сессия устарела")):
             r = sync_transactions()
         assert r.ok is False
         assert r.error_code == "STALE_COOKIE"
 
     def test_failure_network(self):
-        with patch("ingestion.steam_transactions.fetch_market_history", return_value=([], "Connection error")):
+        with patch("scrapper.steam_transactions.fetch_market_history", return_value=([], "Connection error")):
             r = sync_transactions()
         assert r.ok is False
         assert r.error_code == "NETWORK"
 
     def test_failure_empty_list_treated_as_no_transactions(self):
-        with patch("ingestion.steam_transactions.fetch_market_history", return_value=([], "NO_COOKIE")):
+        with patch("scrapper.steam_transactions.fetch_market_history", return_value=([], "NO_COOKIE")):
             r = sync_transactions()
         assert r.ok is False
 
     def test_failure_returns_transactions_result(self):
-        with patch("ingestion.steam_transactions.fetch_market_history", return_value=(None, "NO_COOKIE")):
+        with patch("scrapper.steam_transactions.fetch_market_history", return_value=(None, "NO_COOKIE")):
             r = sync_transactions()
         assert isinstance(r, TransactionsResult)
 
     def test_success_error_code_is_none(self):
-        with patch("ingestion.steam_transactions.fetch_market_history", return_value=(_TX, "ok")), \
-             patch("ingestion.steam_transactions.compute_annual_pnl", return_value={}):
+        with patch("scrapper.steam_transactions.fetch_market_history", return_value=(_TX, "ok")), \
+             patch("scrapper.steam_transactions.compute_annual_pnl", return_value={}):
             r = sync_transactions()
         assert r.error_code is None
 
     def test_max_pages_forwarded_to_fetch(self):
         mock_fetch = MagicMock(return_value=(_TX, "ok"))
-        with patch("ingestion.steam_transactions.fetch_market_history", mock_fetch), \
-             patch("ingestion.steam_transactions.compute_annual_pnl", return_value={}):
+        with patch("scrapper.steam_transactions.fetch_market_history", mock_fetch), \
+             patch("scrapper.steam_transactions.compute_annual_pnl", return_value={}):
             sync_transactions(max_pages=5)
         mock_fetch.assert_called_once_with(max_pages=5)

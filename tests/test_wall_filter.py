@@ -10,7 +10,7 @@ import math
 
 import pytest
 
-from domain.wall_filter import compute_wall_metrics, get_best_buy_order
+from src.domain.wall_filter import compute_wall_metrics, get_best_buy_order
 
 # ─── compute_wall_metrics ─────────────────────────────────────────────────────
 

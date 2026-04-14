@@ -2,7 +2,7 @@
 Phase 2 — TDD tests for services/portfolio.py new interfaces (PV-01).
 
 Tests are written BEFORE implementation (Red stage).
-All imports from domain.portfolio will pass only after Phase 3 migration.
+All imports from src.domain.portfolio will pass only after Phase 3 migration.
 
 Coverage:
   1. compute_pnl            — точность, нули, экстремальные значения
@@ -22,7 +22,7 @@ from sqlalchemy.exc import OperationalError as SAOperationalError
 
 # ─── Imports under test ───────────────────────────────────────────────────────
 # These will raise ImportError until Phase 3 migrates the functions.
-from domain.portfolio import (
+from src.domain.portfolio import (
     compute_pnl,
     get_annual_summaries,
     get_balance_data,

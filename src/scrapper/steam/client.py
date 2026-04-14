@@ -130,7 +130,7 @@ def _trigger_emergency_stop(item_name: str, attempt: int = 0) -> int:
 def _publish_auth_error(item_name: str, status_code: int) -> None:
     """Notify about Steam auth error. Direct call — no event bus."""
     try:
-        from domain.events import AuthError
+        from src.domain.events import AuthError
         from infra.signal_handler import notify_auth_error
 
         notify_auth_error(

@@ -85,8 +85,8 @@ def fetch_steam_price(self, item_id: str) -> float | None:
         raise self.retry(countdown=_RETRY_COUNTDOWN)
 
     # ── Resolve container name ─────────────────────────────────────────────────
-    from domain.connection import SessionLocal
-    from domain.models import DimContainer
+    from src.domain.connection import SessionLocal
+    from src.domain.models import DimContainer
 
     with SessionLocal() as db:
         container = db.get(DimContainer, item_id)
@@ -167,7 +167,7 @@ def fetch_steam_price(self, item_id: str) -> float | None:
         return None
 
     # ── Persist via ItemService (validation + save) ────────────────────────────
-    from domain.item_service import ItemService
+    from src.domain.item_service import ItemService
 
     _t0 = time.monotonic()
     svc = ItemService.open()
@@ -228,8 +228,8 @@ def poll_container_prices_task(self) -> dict:
         logger.info("poll_skipped_stealth_block", service="tasks")
         return {"queued": 0, "skipped_blacklisted": 0, "skipped_block": 1, "backfill_triggered": 0}
 
-    from domain.connection import SessionLocal
-    from domain.models import DimContainer, FactContainerPrice
+    from src.domain.connection import SessionLocal
+    from src.domain.models import DimContainer, FactContainerPrice
 
     with SessionLocal() as db:
         containers = db.query(DimContainer).filter(
@@ -306,8 +306,8 @@ def backfill_history_task(self, names: list[str] | None = None) -> dict:
 
     from sqlalchemy import func
 
-    from domain.connection import SessionLocal
-    from domain.models import DimContainer, FactContainerPrice
+    from src.domain.connection import SessionLocal
+    from src.domain.models import DimContainer, FactContainerPrice
 
     if _is_stealth_blocked():
         logger.info("backfill_skipped_stealth_block", service="tasks")
@@ -539,12 +539,12 @@ def sync_inventory_task(self) -> dict:
         return {"status": "ok", "items": 0, "reconciled": False}
 
     # ── Persist trade-ban dates ────────────────────────────────────────────────
-    from domain.connection import SessionLocal
-    from domain.sql_repositories import (
+    from src.domain.connection import SessionLocal
+    from src.domain.sql_repositories import (
         SqlAlchemyInventoryRepository,
         SqlAlchemyPositionRepository,
     )
-    from domain.reconciler import PositionReconciler
+    from src.domain.reconciler import PositionReconciler
 
     with SessionLocal() as db:
         inv_repo = SqlAlchemyInventoryRepository(db)
@@ -591,8 +591,8 @@ def cleanup_old_history_task(self) -> dict:
 
     Returns a summary dict: {status, rows_deleted, summaries_inserted}.
     """
-    from domain.connection import SessionLocal
-    from domain.postgres_repo import PostgresRepository
+    from src.domain.connection import SessionLocal
+    from src.domain.postgres_repo import PostgresRepository
 
     _t0 = time.monotonic()
     logger.info("downsampling_started", service="tasks")

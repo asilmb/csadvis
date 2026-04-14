@@ -23,17 +23,17 @@ from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
 from config import settings
-from domain.connection import SessionLocal
-from domain.models import (
+from src.domain.connection import SessionLocal
+from src.domain.models import (
     DimAnnualSummary,
     DimContainer,
     FactContainerPrice,
     FactPortfolioSnapshot,
     FactTransaction,
 )
-from domain.repositories import InventoryRepository
-from domain.services import compute_smart_buy_price
-from domain.value_objects import Amount
+from src.domain.repositories import InventoryRepository
+from src.domain.services import compute_smart_buy_price
+from src.domain.value_objects import Amount
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +221,7 @@ def get_cached_portfolio_advice() -> dict | None:
     """
     import json
 
-    from domain.models import FactPortfolioAdvice
+    from src.domain.models import FactPortfolioAdvice
 
     db = SessionLocal()
     try:
@@ -263,7 +263,7 @@ def get_cached_signals() -> dict[str, dict]:
     """
     from sqlalchemy import func
 
-    from domain.models import FactInvestmentSignal
+    from src.domain.models import FactInvestmentSignal
 
     db = SessionLocal()
     try:

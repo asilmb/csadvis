@@ -38,8 +38,8 @@ def log_event(level: str, module: str, message: str) -> None:
     from multiple worker threads simultaneously without locking.
     """
     try:
-        from domain.connection import SessionLocal
-        from domain.models import EventLog
+        from src.domain.connection import SessionLocal
+        from src.domain.models import EventLog
 
         with SessionLocal() as db:
             db.add(

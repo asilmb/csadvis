@@ -89,8 +89,8 @@ def sync_wallet() -> WalletResult:
     except AuthError as exc:
         cached = get_saved_balance()
         try:
-            from domain.connection import SessionLocal
-            from domain.sql_repositories import set_cookie_status
+            from src.domain.connection import SessionLocal
+            from src.domain.sql_repositories import set_cookie_status
             with SessionLocal() as _db:
                 set_cookie_status(_db, "EXPIRED")
                 _db.commit()
@@ -121,8 +121,8 @@ def sync_wallet() -> WalletResult:
 
     save_balance(balance)
     try:
-        from domain.connection import SessionLocal
-        from domain.sql_repositories import set_cookie_status
+        from src.domain.connection import SessionLocal
+        from src.domain.sql_repositories import set_cookie_status
         with SessionLocal() as _db:
             set_cookie_status(_db, "VALID")
             _db.commit()

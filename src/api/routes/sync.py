@@ -19,7 +19,7 @@ import logging
 
 from fastapi import APIRouter
 
-from api.schemas import (
+from src.api.schemas import (
     SyncDispatchResponse,
     SyncTransactionsResponse,
     SyncWalletResponse,

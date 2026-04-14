@@ -25,7 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from config import settings
-from domain.value_objects import Amount, ROI
+from src.domain.value_objects import Amount, ROI
 
 
 @dataclass(frozen=True)

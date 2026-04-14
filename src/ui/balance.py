@@ -22,7 +22,7 @@ from config import settings as _settings
 from ui.charts import build_30d_chart, build_monthly_chart
 from ui.theme import COLORS as _COLORS
 from scrapper.steam_wallet import get_saved_balance
-from domain.portfolio import get_annual_summaries, get_balance_data, get_monthly_pnl, get_transactions
+from src.domain.portfolio import get_annual_summaries, get_balance_data, get_monthly_pnl, get_transactions
 
 logger = logging.getLogger(__name__)
 

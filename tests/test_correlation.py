@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from domain.correlation import (
+from src.domain.correlation import (
     _pearson,
     _to_log_returns,
     check_portfolio_correlation,
@@ -180,7 +180,7 @@ class TestCheckPortfolioCorrelation:
 class TestResamplePair:
     def test_no_gaps_passthrough(self) -> None:
         """Contiguous daily data → resampled length equals original."""
-        from domain.correlation import _resample_pair
+        from src.domain.correlation import _resample_pair
 
         si = {"2024-01-01": 100.0, "2024-01-02": 101.0, "2024-01-03": 102.0}
         sj = {"2024-01-01": 200.0, "2024-01-02": 202.0, "2024-01-03": 204.0}
@@ -190,7 +190,7 @@ class TestResamplePair:
 
     def test_gap_in_one_series_fills_forward(self) -> None:
         """Series i missing Jan 2 → Jan 2 price is filled from Jan 1."""
-        from domain.correlation import _resample_pair
+        from src.domain.correlation import _resample_pair
 
         si = {"2024-01-01": 100.0, "2024-01-03": 102.0}  # gap on Jan 2
         sj = {"2024-01-01": 200.0, "2024-01-02": 201.0, "2024-01-03": 204.0}
@@ -203,7 +203,7 @@ class TestResamplePair:
 
     def test_day_excluded_when_both_ffill(self) -> None:
         """Days where neither series has real data are excluded."""
-        from domain.correlation import _resample_pair
+        from src.domain.correlation import _resample_pair
 
         # Both have data Jan 1 and Jan 3 only — Jan 2 is ffill for both
         si = {"2024-01-01": 100.0, "2024-01-03": 102.0}
@@ -215,7 +215,7 @@ class TestResamplePair:
         assert pj == [200.0, 204.0]
 
     def test_no_overlap_returns_empty(self) -> None:
-        from domain.correlation import _resample_pair
+        from src.domain.correlation import _resample_pair
 
         si = {"2024-01-01": 100.0, "2024-01-02": 101.0}
         sj = {"2024-02-01": 200.0, "2024-02-02": 202.0}
@@ -224,14 +224,14 @@ class TestResamplePair:
         assert pj == []
 
     def test_empty_series_returns_empty(self) -> None:
-        from domain.correlation import _resample_pair
+        from src.domain.correlation import _resample_pair
 
         assert _resample_pair({}, {"2024-01-01": 1.0}) == ([], [])
         assert _resample_pair({"2024-01-01": 1.0}, {}) == ([], [])
 
     def test_equal_length_output(self) -> None:
         """Output vectors are always equal length."""
-        from domain.correlation import _resample_pair
+        from src.domain.correlation import _resample_pair
 
         si = {"2024-01-01": 10.0, "2024-01-04": 13.0, "2024-01-07": 16.0}
         sj = {"2024-01-01": 20.0, "2024-01-03": 22.0, "2024-01-07": 26.0}
@@ -247,7 +247,7 @@ class TestResamplePair:
         # 35 real points, same dates across Feb–Mar 2024 (no calendar overflow)
         from datetime import date, timedelta
 
-        from domain.correlation import _pearson, _resample_pair, _to_log_returns
+        from src.domain.correlation import _pearson, _resample_pair, _to_log_returns
 
         start = date(2024, 2, 1)
         base_dates = [(start + timedelta(days=i)).isoformat() for i in range(35)]

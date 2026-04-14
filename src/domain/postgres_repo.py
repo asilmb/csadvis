@@ -7,7 +7,7 @@ from typing import List
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from domain.abstract_repo import AbstractRepository, ContainerDTO, PriceDTO
+from src.domain.abstract_repo import AbstractRepository, ContainerDTO, PriceDTO
 
 
 class PostgresRepository(AbstractRepository):
@@ -20,7 +20,7 @@ class PostgresRepository(AbstractRepository):
         self._db = db
 
     def get_all_containers(self) -> List[ContainerDTO]:
-        from domain.models import DimContainer
+        from src.domain.models import DimContainer
 
         rows = self._db.execute(select(DimContainer)).scalars().all()
         return [
@@ -41,7 +41,7 @@ class PostgresRepository(AbstractRepository):
         price: float,
         timestamp: datetime,
     ) -> None:
-        from domain.models import FactContainerPrice
+        from src.domain.models import FactContainerPrice
 
         row = FactContainerPrice(
             id=str(uuid.uuid4()),
@@ -60,7 +60,7 @@ class PostgresRepository(AbstractRepository):
         """
         from sqlalchemy.dialects.postgresql import insert
 
-        from domain.models import SystemSettings
+        from src.domain.models import SystemSettings
 
         stmt = insert(SystemSettings).values(
             key=f"tier:{item_id}",
@@ -73,7 +73,7 @@ class PostgresRepository(AbstractRepository):
         self._db.execute(stmt)
 
     def get_price_history(self, item_id: str, days: int) -> List[PriceDTO]:
-        from domain.models import FactContainerPrice
+        from src.domain.models import FactContainerPrice
 
         cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=days)
         stmt = (
@@ -97,14 +97,14 @@ class PostgresRepository(AbstractRepository):
         ]
 
     def get_market_sync_list(self) -> List[str]:
-        from domain.models import DimContainer
+        from src.domain.models import DimContainer
 
         stmt = select(DimContainer.container_name).where(DimContainer.is_blacklisted == 0)
         rows = self._db.execute(stmt).all()
         return [str(r.container_name) for r in rows]
 
     def increment_error_count(self, container_name: str) -> None:
-        from domain.models import DimContainer
+        from src.domain.models import DimContainer
 
         stmt = select(DimContainer).where(DimContainer.container_name == container_name)
         container = self._db.execute(stmt).scalar_one_or_none()
@@ -116,7 +116,7 @@ class PostgresRepository(AbstractRepository):
         self._db.flush()
 
     def get_prices_since(self, cutoff: datetime) -> List[tuple]:
-        from domain.models import FactContainerPrice
+        from src.domain.models import FactContainerPrice
 
         stmt = (
             select(FactContainerPrice.container_id, FactContainerPrice.price)
@@ -129,7 +129,7 @@ class PostgresRepository(AbstractRepository):
         return [(str(r.container_id), float(r.price)) for r in rows]
 
     def get_container_id_by_name(self, container_name: str) -> "str | None":
-        from domain.models import DimContainer
+        from src.domain.models import DimContainer
 
         stmt = select(DimContainer.container_id).where(
             DimContainer.container_name == container_name
@@ -140,7 +140,7 @@ class PostgresRepository(AbstractRepository):
     def get_max_timestamps_by_container(self) -> "dict[str, datetime]":
         from sqlalchemy import func
 
-        from domain.models import FactContainerPrice
+        from src.domain.models import FactContainerPrice
 
         stmt = select(
             FactContainerPrice.container_id,
@@ -150,7 +150,7 @@ class PostgresRepository(AbstractRepository):
         return {str(cid): ts for cid, ts in rows if ts is not None}
 
     def bulk_add_prices(self, rows: "list[dict]") -> None:
-        from domain.models import FactContainerPrice
+        from src.domain.models import FactContainerPrice
 
         objs = [
             FactContainerPrice(
@@ -184,7 +184,7 @@ class PostgresRepository(AbstractRepository):
         from sqlalchemy import func, text
         from sqlalchemy.dialects.postgresql import insert
 
-        from domain.models import FactContainerPrice
+        from src.domain.models import FactContainerPrice
 
         cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=days_threshold)
 

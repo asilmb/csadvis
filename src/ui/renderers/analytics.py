@@ -12,8 +12,8 @@ import plotly.graph_objects as go
 from dash import dcc, html
 
 from config import settings as _settings
-from domain.correlation import compute_correlation_matrix
-from domain.event_calendar import (
+from src.domain.correlation import compute_correlation_matrix
+from src.domain.event_calendar import (
     get_event_impact,
     get_event_signals,
     get_upcoming_events,

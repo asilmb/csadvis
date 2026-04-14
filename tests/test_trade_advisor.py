@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from domain.trade_advisor import _percentile, compute_trade_advice
+from src.domain.trade_advisor import _percentile, compute_trade_advice
 
 
 def _ts(days_ago: int) -> str:

@@ -13,8 +13,8 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
-from domain.repositories import InventoryRepository
-from domain.value_objects import Amount
+from src.domain.repositories import InventoryRepository
+from src.domain.value_objects import Amount
 
 # ─── Task Queue DTO ───────────────────────────────────────────────────────────
 
@@ -54,7 +54,7 @@ class SqlAlchemyInventoryRepository(InventoryRepository):
         """
         from sqlalchemy import func
 
-        from domain.models import DimContainer, FactContainerPrice
+        from src.domain.models import DimContainer, FactContainerPrice
 
         cutoff_30d = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=30)
 
@@ -125,7 +125,7 @@ class SqlAlchemyInventoryRepository(InventoryRepository):
         """
         from sqlalchemy import func
 
-        from domain.models import DimContainer, FactContainerPrice
+        from src.domain.models import DimContainer, FactContainerPrice
 
         container = (
             self._db.query(DimContainer)
@@ -164,7 +164,7 @@ class SqlAlchemyInventoryRepository(InventoryRepository):
         Passing unlock_at=None clears the trade lock (item is freely tradable).
         Does NOT commit — caller owns the transaction.
         """
-        from domain.models import DimUserPosition
+        from src.domain.models import DimUserPosition
 
         rows = (
             self._db.query(DimUserPosition)
@@ -193,7 +193,7 @@ class SqlAlchemyInventoryRepository(InventoryRepository):
         Only returns True when every known position is in a deep ban,
         making a JIT price fetch wasteful.
         """
-        from domain.models import DimUserPosition
+        from src.domain.models import DimUserPosition
 
         rows = (
             self._db.query(DimUserPosition)
@@ -218,7 +218,7 @@ class SqlAlchemyInventoryRepository(InventoryRepository):
         Return wallet + inventory from the most recent portfolio snapshot.
         Returns Amount(0) when no snapshot has been saved yet.
         """
-        from domain.models import FactPortfolioSnapshot
+        from src.domain.models import FactPortfolioSnapshot
 
         row = (
             self._db.query(FactPortfolioSnapshot)
@@ -283,7 +283,7 @@ class SqlAlchemyPositionRepository:
 
     def get_open_positions(self) -> list[PositionDTO]:
         """Return all positions with status=OPEN ordered by opened_at DESC."""
-        from domain.models import Position, PositionStatus
+        from src.domain.models import Position, PositionStatus
 
         rows = (
             self._db.query(Position)
@@ -303,7 +303,7 @@ class SqlAlchemyPositionRepository:
         """
         Insert a new OPEN position.  Does NOT commit — caller owns the transaction.
         """
-        from domain.models import Position
+        from src.domain.models import Position
 
         row = Position(
             asset_id=asset_id,
@@ -322,7 +322,7 @@ class SqlAlchemyPositionRepository:
         Returns the updated DTO, or None when no matching OPEN position exists.
         Does NOT commit — caller owns the transaction.
         """
-        from domain.models import Position, PositionStatus
+        from src.domain.models import Position, PositionStatus
 
         row = (
             self._db.query(Position)
@@ -349,7 +349,7 @@ class SqlAlchemyPositionRepository:
         is_on_market: bool | None = None,
     ) -> None:
         """Update asset identity fields on a position. Does NOT commit."""
-        from domain.models import Position
+        from src.domain.models import Position
 
         row = self._db.query(Position).filter(Position.id == position_id).first()
         if row is None:
@@ -365,7 +365,7 @@ class SqlAlchemyPositionRepository:
 
     def get_open_by_classid(self, classid: str) -> list[PositionDTO]:
         """Return OPEN positions matching classid, ordered by opened_at ASC (FIFO), then id ASC."""
-        from domain.models import Position, PositionStatus
+        from src.domain.models import Position, PositionStatus
 
         rows = (
             self._db.query(Position)
@@ -380,7 +380,7 @@ class SqlAlchemyPositionRepository:
 
     def get_open_by_market_id(self, market_id: str) -> PositionDTO | None:
         """Return the first OPEN position matching market_id."""
-        from domain.models import Position, PositionStatus
+        from src.domain.models import Position, PositionStatus
 
         row = (
             self._db.query(Position)
@@ -438,7 +438,7 @@ class SqlAlchemyPriceRepository:
         or None when the container is not in DimContainer or has no price rows.
         """
 
-        from domain.models import DimContainer, FactContainerPrice
+        from src.domain.models import DimContainer, FactContainerPrice
 
         container = (
             self._db.query(DimContainer)
@@ -481,7 +481,7 @@ class SqlAlchemyPriceRepository:
         Does NOT commit — caller owns the transaction.
         Returns True on success, False when the container is not found.
         """
-        from domain.models import DimContainer, FactContainerPrice
+        from src.domain.models import DimContainer, FactContainerPrice
 
         container = (
             self._db.query(DimContainer)
@@ -510,7 +510,7 @@ class SqlAlchemyPriceRepository:
 
         Returns an empty list when container_name is not in DimContainer or has no rows.
         """
-        from domain.models import DimContainer, FactContainerPrice
+        from src.domain.models import DimContainer, FactContainerPrice
 
         container = (
             self._db.query(DimContainer)
@@ -586,7 +586,7 @@ class SqlAlchemyTaskQueueRepository:
         number than the incoming request, the existing row is promoted in-place.
         Returns None in both cases — the caller receives no new DTO.
         """
-        from domain.models import TaskQueue, TaskStatus
+        from src.domain.models import TaskQueue, TaskStatus
 
         active = (
             self._db.query(TaskQueue)
@@ -658,7 +658,7 @@ class SqlAlchemyTaskQueueRepository:
 
     def complete(self, task_id: str) -> None:
         """Mark task COMPLETED and stamp completed_at / updated_at."""
-        from domain.models import TaskQueue, TaskStatus
+        from src.domain.models import TaskQueue, TaskStatus
 
         now = datetime.now(UTC).replace(tzinfo=None)
         row = self._db.query(TaskQueue).filter(TaskQueue.id == task_id).first()
@@ -673,7 +673,7 @@ class SqlAlchemyTaskQueueRepository:
         Increment retries counter.  Moves to RETRY when retries < max_retries,
         otherwise FAILED.  Returns the new status string.
         """
-        from domain.models import TaskQueue, TaskStatus
+        from src.domain.models import TaskQueue, TaskStatus
 
         now = datetime.now(UTC).replace(tzinfo=None)
         row = self._db.query(TaskQueue).filter(TaskQueue.id == task_id).first()
@@ -689,7 +689,7 @@ class SqlAlchemyTaskQueueRepository:
 
     def pause_auth(self, task_id: str) -> None:
         """Mark task PAUSED_AUTH — auth loop detected; task waits for cookie update."""
-        from domain.models import TaskQueue, TaskStatus
+        from src.domain.models import TaskQueue, TaskStatus
 
         row = self._db.query(TaskQueue).filter(TaskQueue.id == task_id).first()
         if row is not None:
@@ -699,7 +699,7 @@ class SqlAlchemyTaskQueueRepository:
 
     def requeue_pending(self, task_id: str) -> None:
         """Reset a task back to PENDING without incrementing the retry counter (network backoff)."""
-        from domain.models import TaskQueue, TaskStatus
+        from src.domain.models import TaskQueue, TaskStatus
 
         row = self._db.query(TaskQueue).filter(TaskQueue.id == task_id).first()
         if row is not None:
@@ -719,7 +719,7 @@ class SqlAlchemyTaskQueueRepository:
         """
         import json as _json
 
-        from domain.models import TaskQueue, TaskStatus
+        from src.domain.models import TaskQueue, TaskStatus
 
         row = TaskQueue(type=task_type, priority=priority, payload=payload)
         row.status = TaskStatus.PROCESSING
@@ -729,7 +729,7 @@ class SqlAlchemyTaskQueueRepository:
 
     def update_task_progress(self, task_id: str, progress: dict) -> None:
         """Merge progress dict into task payload for live UI visibility (best-effort)."""
-        from domain.models import TaskQueue
+        from src.domain.models import TaskQueue
 
         row = self._db.query(TaskQueue).filter(TaskQueue.id == task_id).first()
         if row is not None:
@@ -741,7 +741,7 @@ class SqlAlchemyTaskQueueRepository:
 
     def has_paused_auth_tasks(self) -> bool:
         """Return True if any task is currently in PAUSED_AUTH state."""
-        from domain.models import TaskQueue, TaskStatus
+        from src.domain.models import TaskQueue, TaskStatus
 
         return (
             self._db.query(TaskQueue)
@@ -755,14 +755,14 @@ class SqlAlchemyTaskQueueRepository:
 
 def get_cookie_status(db) -> str:
     """Return current cookie status: 'VALID' | 'EXPIRED' | 'UNKNOWN'."""
-    from domain.models import SystemSettings
+    from src.domain.models import SystemSettings
     row = db.get(SystemSettings, "cookie_status")
     return row.value if row and row.value else "UNKNOWN"
 
 
 def set_cookie_status(db, status: str) -> None:
     """Upsert cookie_status key in SystemSettings. Caller must commit."""
-    from domain.models import SystemSettings
+    from src.domain.models import SystemSettings
     from datetime import datetime, timezone
     row = db.get(SystemSettings, "cookie_status")
     if row is None:

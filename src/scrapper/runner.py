@@ -37,7 +37,7 @@ def run_market_sync(self) -> dict:  # type: ignore[misc]
 
     Returns a summary dict: {"status": "ok", "scraped": N, "inserted": M}.
     """
-    from domain.connection import SessionLocal
+    from src.domain.connection import SessionLocal
     from scrapper.db_writer import write_new_containers
     from scrapper.state import mark_done
     from scrapper.steam_market_scraper import scrape_all_containers
@@ -134,12 +134,12 @@ def run_inventory_sync(self, steam_id: str | None = None) -> dict:  # type: igno
         return {"status": "ok", "items": 0}
 
     # ── Persist trade-ban dates ───────────────────────────────────────────────
-    from domain.connection import SessionLocal
-    from domain.sql_repositories import (
+    from src.domain.connection import SessionLocal
+    from src.domain.sql_repositories import (
         SqlAlchemyInventoryRepository,
         SqlAlchemyPositionRepository,
     )
-    from domain.reconciler import PositionReconciler
+    from src.domain.reconciler import PositionReconciler
 
     with SessionLocal() as db:
         inv_repo = SqlAlchemyInventoryRepository(db)

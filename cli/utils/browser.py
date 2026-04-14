@@ -25,10 +25,10 @@ def startup_auth_check(settings) -> bool:
         if _bal is None and any(k in _msg.lower() for k in ("403", "устарел", "expired", "cookie")):
             print("[UP] WARNING: Steam cookie expired — dashboard will prompt for update.")
             try:
-                from domain.connection import SessionLocal, init_db
+                from src.domain.connection import SessionLocal, init_db
 
                 init_db()
-                from domain.sql_repositories import set_cookie_status
+                from src.domain.sql_repositories import set_cookie_status
 
                 with SessionLocal() as _db:
                     set_cookie_status(_db, "EXPIRED")

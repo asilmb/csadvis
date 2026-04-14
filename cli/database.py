@@ -18,8 +18,8 @@ def cmd_backfill(args) -> None:
 
     from sqlalchemy import func
 
-    from domain.connection import SessionLocal, init_db
-    from domain.models import DimContainer, FactContainerPrice
+    from src.domain.connection import SessionLocal, init_db
+    from src.domain.models import DimContainer, FactContainerPrice
     from scrapper.steam.client import SteamMarketClient
     from scrapper.steam.logic import fetch_all as steam_fetch_all
 
@@ -133,7 +133,7 @@ def cmd_scrape(args) -> None:
     """Run the Steam Market container scraper right now (ignores the date check)."""
     import asyncio
 
-    from domain.connection import SessionLocal, init_db
+    from src.domain.connection import SessionLocal, init_db
     from scrapper.db_writer import write_new_containers
     from scrapper.state import mark_done
     from scrapper.steam_market_scraper import scrape_all_containers
@@ -188,7 +188,7 @@ def cmd_events_refresh(args) -> None:
     # Validate the downloaded YAML before writing
     import tempfile
 
-    from domain.event_loader import load_events
+    from src.domain.event_loader import load_events
 
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".yaml", delete=False, encoding="utf-8"
@@ -213,7 +213,7 @@ def cmd_events_refresh(args) -> None:
 
 def cmd_db_seed(args) -> None:
     """Re-run the static data seeder (safe to run multiple times)."""
-    from domain.connection import SessionLocal, init_db
+    from src.domain.connection import SessionLocal, init_db
     from seed.data import seed_database
 
     init_db()
@@ -226,8 +226,8 @@ def cmd_db_prune(args) -> None:
     """Delete price snapshots older than 2 years to keep DB size manageable."""
     from datetime import UTC, datetime, timedelta
 
-    from domain.connection import SessionLocal, init_db
-    from domain.models import FactContainerPrice
+    from src.domain.connection import SessionLocal, init_db
+    from src.domain.models import FactContainerPrice
 
     cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=730)
     print(f"\n  Pruning price records older than {cutoff.strftime('%Y-%m-%d')} ...")
@@ -254,7 +254,7 @@ def cmd_db_cleanup(args) -> None:
     Deletes COMPLETED/FAILED tasks older than 24 h, EventLog rows older than
     7 days (protecting ERROR/CRITICAL within 48 h), then runs VACUUM.
     """
-    from domain.connection import init_db
+    from src.domain.connection import init_db
     from infra.maintenance import MaintenanceService
 
     init_db()
@@ -282,8 +282,8 @@ def cmd_db_reset(args) -> None:
 
     from sqlalchemy import text
 
-    from domain.connection import SessionLocal, engine, init_db
-    from domain.models import Base
+    from src.domain.connection import SessionLocal, engine, init_db
+    from src.domain.models import Base
     from seed.data import seed_database
 
     Base.metadata.drop_all(bind=engine)

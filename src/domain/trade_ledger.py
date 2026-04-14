@@ -16,7 +16,7 @@ STEAM_NET_MULTIPLIER = 0.869 accounts for Steam's ~13.1% effective take-rate
 All P&L values are plain float — rounding happens only at the Dash display boundary.
 
 Usage:
-    from domain.trade_ledger import TradeService
+    from src.domain.trade_ledger import TradeService
 
     svc = TradeService()
     pos = svc.record_purchase(asset_id=76561..., market_hash_name="AK-47 | ...",
@@ -27,7 +27,7 @@ Usage:
 
 from __future__ import annotations
 
-from domain.sql_repositories import PositionDTO, SqlAlchemyPositionRepository
+from src.domain.sql_repositories import PositionDTO, SqlAlchemyPositionRepository
 
 __all__ = ["STEAM_NET_MULTIPLIER", "PositionDTO", "TradeService"]
 
@@ -96,7 +96,7 @@ class TradeService:
         buy_price:         Price paid per unit (KZT).
         quantity:          Units purchased (default 1).
         """
-        from domain.connection import SessionLocal
+        from src.domain.connection import SessionLocal
 
         with SessionLocal() as db:
             repo = SqlAlchemyPositionRepository(db)
@@ -120,7 +120,7 @@ class TradeService:
         asset_id:    Steam 64-bit asset ID of the item being sold.
         sell_price:  Listed sell price (KZT) — used to compute realised P&L.
         """
-        from domain.connection import SessionLocal
+        from src.domain.connection import SessionLocal
 
         with SessionLocal() as db:
             repo = SqlAlchemyPositionRepository(db)
@@ -160,7 +160,7 @@ class TradeService:
             total_pnl     — float | None: total unrealized P&L (None if any price missing)
             avg_roi       — float | None: mean ROI across positions with known prices
         """
-        from domain.connection import SessionLocal
+        from src.domain.connection import SessionLocal
 
         price_map = price_map or {}
 

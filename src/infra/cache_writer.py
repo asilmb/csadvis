@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
-from domain.value_objects import Amount, ROI
+from src.domain.value_objects import Amount, ROI
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ def write_portfolio_advice(db: Session, result: dict) -> None:
 
     Does NOT call db.commit() — the caller owns the transaction.
     """
-    from domain.models import FactPortfolioAdvice
+    from src.domain.models import FactPortfolioAdvice
 
     db.query(FactPortfolioAdvice).delete()
 
@@ -95,7 +95,7 @@ def write_investment_signals(db: Session, signals: dict[str, dict], computed_at:
     This prevents a silent DELETE leaving the table permanently empty when the engine
     returns no results (e.g. no containers, failed price load, or upstream error).
     """
-    from domain.models import FactInvestmentSignal
+    from src.domain.models import FactInvestmentSignal
 
     def _ratio_roi(sig: dict) -> ROI | None:
         pct = sig.get("price_ratio_pct")
@@ -154,7 +154,7 @@ def _fetch_order_book_data(
     import asyncio
 
     from config import settings
-    from domain.wall_filter import compute_wall_metrics, get_best_buy_order  # noqa: F401
+    from src.domain.wall_filter import compute_wall_metrics, get_best_buy_order  # noqa: F401
     from scrapper.nameid_cache import load_nameid_cache, save_nameid_cache
     from scrapper.steam.client import SteamMarketClient
 
@@ -221,13 +221,13 @@ def refresh_cache(db: Session) -> None:
     Does NOT call db.commit() — the caller owns the transaction.
     On any engine error the exception propagates so the caller can log + rollback.
     """
-    from domain.connection import SessionLocal
-    from domain.models import DimContainer, DimUserPosition, FactContainerPrice
-    from domain.investment import compute_all_investment_signals
-    from domain.portfolio_advisor import allocate_portfolio
-    from domain.trade_advisor import compute_trade_advice
+    from src.domain.connection import SessionLocal
+    from src.domain.models import DimContainer, DimUserPosition, FactContainerPrice
+    from src.domain.investment import compute_all_investment_signals
+    from src.domain.portfolio_advisor import allocate_portfolio
+    from src.domain.trade_advisor import compute_trade_advice
     from scrapper.steam_wallet import get_saved_balance
-    from domain.portfolio import get_portfolio_data
+    from src.domain.portfolio import get_portfolio_data
 
     # ── Gather inputs ──────────────────────────────────────────────────────────
 

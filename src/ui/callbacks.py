@@ -18,8 +18,8 @@ import dash_bootstrap_components as dbc
 import dash
 from dash import ALL, Input, Output, State, callback_context, html, no_update
 from config import settings as _settings
-from domain.value_objects import Amount
-from domain.event_calendar import get_event_signals as _get_ev_signals
+from src.domain.value_objects import Amount
+from src.domain.event_calendar import get_event_signals as _get_ev_signals
 from ui.helpers import (
     _BG,
     _BG3,
@@ -63,7 +63,7 @@ def register_callbacks(app: Any) -> None:
     )
     def refresh_prices(n_intervals: Any) -> Any:
         # PV-05: all market data flows through ItemService (never raw repo/DB in callbacks)
-        from domain.item_service import ItemService
+        from src.domain.item_service import ItemService
 
         svc = ItemService.open()
         try:
@@ -255,7 +255,7 @@ def register_callbacks(app: Any) -> None:
     def load_price_count(_startup: Any, _refresh: Any) -> Any:
         """Return number of items with prices so render_tab can show cold-start banner."""
         try:
-            from domain.item_service import ItemService
+            from src.domain.item_service import ItemService
 
             svc = ItemService.open()
             try:
@@ -628,7 +628,7 @@ def register_callbacks(app: Any) -> None:
         import uuid as _uuid
 
         from scrapper.steam_transactions import compute_annual_pnl, fetch_market_history
-        from domain.portfolio import upsert_annual
+        from src.domain.portfolio import upsert_annual
 
         transactions, msg = fetch_market_history(max_pages=10)
 
@@ -644,7 +644,7 @@ def register_callbacks(app: Any) -> None:
             status = html.Span(display_msg, style={"color": _YELLOW, "fontSize": "11px"})
             return status, no_update, display_msg, "История Steam", True, "warning"
 
-        from domain.models import FactTransaction
+        from src.domain.models import FactTransaction
 
         db = SessionLocal()
         try:
@@ -722,7 +722,7 @@ def register_callbacks(app: Any) -> None:
 
         from dash import html as _html
 
-        from domain.portfolio import upsert_annual
+        from src.domain.portfolio import upsert_annual
         from scrapper.steam_sync import sync_inventory as _sync_inv
         from scrapper.steam_sync import sync_transactions as _sync_tx
         from scrapper.steam_sync import sync_wallet as _sync_wal
@@ -741,7 +741,7 @@ def register_callbacks(app: Any) -> None:
 
             # Persist transactions to DB (same logic as load_steam_history)
             if transactions.ok and transactions.transactions:
-                from domain.models import FactTransaction
+                from src.domain.models import FactTransaction
 
                 db = SessionLocal()
                 try:
@@ -775,7 +775,7 @@ def register_callbacks(app: Any) -> None:
 
             # CACHE-1: recompute and persist portfolio advice + investment signals
             try:
-                from domain.connection import SessionLocal as _SL
+                from src.domain.connection import SessionLocal as _SL
                 from infra.cache_writer import refresh_cache as _refresh_cache
 
                 _cache_db = _SL()
@@ -853,8 +853,8 @@ def register_callbacks(app: Any) -> None:
                 }
                 # Write EXPIRED to DB so the cookie modal (PV-43) can open
                 try:
-                    from domain.connection import SessionLocal as _SL2
-                    from domain.sql_repositories import set_cookie_status as _set_cs
+                    from src.domain.connection import SessionLocal as _SL2
+                    from src.domain.sql_repositories import set_cookie_status as _set_cs
                     with _SL2() as _csdb:
                         _set_cs(_csdb, "EXPIRED")
                         _csdb.commit()
@@ -947,7 +947,7 @@ def register_callbacks(app: Any) -> None:
         stars_in_pass: int | None,
         stars_per_case: int | None,
     ) -> Any:
-        from domain.armory_pass import compare_armory_pass
+        from src.domain.armory_pass import compare_armory_pass
 
         if not container_name or pass_cost is None:
             return html.Span(
@@ -1023,8 +1023,8 @@ def register_callbacks(app: Any) -> None:
     )
     def update_sync_status(n_intervals: Any, sync_data: Any) -> Any:
         """Show last sync age and disable button while sync tasks are in queue."""
-        from domain.connection import SessionLocal
-        from domain.models import SystemSettings, TaskQueue, TaskStatus
+        from src.domain.connection import SessionLocal
+        from src.domain.models import SystemSettings, TaskQueue, TaskStatus
         from dash import html as _html
 
         # Check if sync tasks are currently running
@@ -1106,8 +1106,8 @@ def _register_cookie_callbacks(app: dash.Dash) -> None:
             logger.warning("check_cookie_status: API unreachable — %s", exc)
 
         try:
-            from domain.connection import SessionLocal as _SL
-            from domain.sql_repositories import SqlAlchemyTaskQueueRepository as _Repo
+            from src.domain.connection import SessionLocal as _SL
+            from src.domain.sql_repositories import SqlAlchemyTaskQueueRepository as _Repo
             with _SL() as _db:
                 has_paused = _Repo(_db).has_paused_auth_tasks()
             logger.info("check_cookie_status: has_paused_auth=%s", has_paused)

@@ -221,12 +221,12 @@ class TestEarliestDate:
         return {"timestamp": ts, "price": 1.0}
 
     def test_returns_none_for_empty(self) -> None:
-        from domain.portfolio_advisor import _earliest_date
+        from src.domain.portfolio_advisor import _earliest_date
 
         assert _earliest_date([]) is None
 
     def test_returns_single_date(self) -> None:
-        from domain.portfolio_advisor import _earliest_date
+        from src.domain.portfolio_advisor import _earliest_date
 
         result = _earliest_date([self._h("2023-01-15 12:00")])
         assert result is not None
@@ -235,7 +235,7 @@ class TestEarliestDate:
         assert result.day == 15
 
     def test_returns_earliest_of_multiple(self) -> None:
-        from domain.portfolio_advisor import _earliest_date
+        from src.domain.portfolio_advisor import _earliest_date
 
         history = [
             self._h("2023-06-01 00:00"),
@@ -247,7 +247,7 @@ class TestEarliestDate:
         assert result.year == 2022
 
     def test_skips_malformed_timestamps(self) -> None:
-        from domain.portfolio_advisor import _earliest_date
+        from src.domain.portfolio_advisor import _earliest_date
 
         history = [
             {"timestamp": "not-a-date", "price": 1.0},
@@ -258,13 +258,13 @@ class TestEarliestDate:
         assert result.year == 2023
 
     def test_all_malformed_returns_none(self) -> None:
-        from domain.portfolio_advisor import _earliest_date
+        from src.domain.portfolio_advisor import _earliest_date
 
         history = [{"timestamp": "bad", "price": 1.0}]
         assert _earliest_date(history) is None
 
     def test_supports_iso_format(self) -> None:
-        from domain.portfolio_advisor import _earliest_date
+        from src.domain.portfolio_advisor import _earliest_date
 
         result = _earliest_date([{"timestamp": "2021-05-20T08:30:00", "price": 1.0}])
         assert result is not None

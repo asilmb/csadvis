@@ -4,7 +4,7 @@ Signal handler — processes domain events and performs side-effects
 
 Engines call the module-level functions directly:
 
-    from services import signal_handler
+    from infra import signal_handler
     signal_handler.notify_super_deal(event)
     signal_handler.notify_liquidity_warning(event)
     signal_handler.notify_auth_error(event)
@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 
 from config import settings
-from domain.events import AuthError, LiquidityWarning, PriceAlert, SuperDealDetected
+from src.domain.events import AuthError, LiquidityWarning, PriceAlert, SuperDealDetected
 from infra.event_logger import log_event
 from infra.webhook_dispatcher import dispatch
 

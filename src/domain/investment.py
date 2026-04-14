@@ -31,8 +31,8 @@ All prices are plain floats — no currency metadata.
 from __future__ import annotations
 
 from config import settings
-from domain.events import LiquidityWarning
-from domain.specifications import VolumeAbove
+from src.domain.events import LiquidityWarning
+from src.domain.specifications import VolumeAbove
 
 _KEY_PRICE = settings.key_price  # standard CS2 case key price (overridable via .env)
 

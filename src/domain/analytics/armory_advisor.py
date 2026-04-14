@@ -16,9 +16,9 @@ Confidence levels (per reward):
     UNKNOWN no price data
 
 Usage:
-    from domain.connection import SessionLocal
-    from domain.sql_repositories import SqlAlchemyPriceRepository
-    from domain.analytics.armory_advisor import ArmoryAdvisor, DEFAULT_REWARD_CATALOG
+    from src.domain.connection import SessionLocal
+    from src.domain.sql_repositories import SqlAlchemyPriceRepository
+    from src.domain.analytics.armory_advisor import ArmoryAdvisor, DEFAULT_REWARD_CATALOG
 
     with SessionLocal() as db:
         advisor = ArmoryAdvisor(SqlAlchemyPriceRepository(db))

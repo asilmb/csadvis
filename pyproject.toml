@@ -40,10 +40,8 @@ dependencies = [
 cs2 = "cli:main"
 
 [tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.setuptools]
-packages = ["cli", "cli.utils"]
+where = ["."]
+include = ["src*", "cli*", "infra*", "scheduler*", "seed*"]
 
 [dependency-groups]
 dev = [
@@ -93,8 +91,7 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = [
-    "api", "database", "engine", "frontend",
-    "ingestion", "scheduler", "scraper", "seed",
+    "src", "cli", "config", "infra", "scheduler", "seed",
 ]
 
 [tool.ruff.format]

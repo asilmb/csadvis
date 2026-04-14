@@ -38,8 +38,8 @@ def _vp_load_db_data() -> tuple[list, dict]:
 
     from sqlalchemy import func
 
-    from domain.connection import SessionLocal
-    from domain.models import DimContainer, FactContainerPrice
+    from src.domain.connection import SessionLocal
+    from src.domain.models import DimContainer, FactContainerPrice
 
     cutoff_30d = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=30)
 
@@ -220,8 +220,8 @@ def cmd_validate_prices(args) -> None:
     """Check top-N containers by invest signal score against live Steam Market API prices."""
     import asyncio
 
-    from domain.connection import init_db
-    from domain.investment import compute_all_investment_signals
+    from src.domain.connection import init_db
+    from src.domain.investment import compute_all_investment_signals
     from scrapper.steam.client import SteamMarketClient
 
     top_n: int = args.top
@@ -285,8 +285,8 @@ def cmd_status(args) -> None:
     """Show database statistics."""
     from sqlalchemy import func
 
-    from domain.connection import SessionLocal, init_db
-    from domain.models import DimContainer, FactContainerPrice
+    from src.domain.connection import SessionLocal, init_db
+    from src.domain.models import DimContainer, FactContainerPrice
 
     init_db()
     with SessionLocal() as db:
@@ -329,7 +329,7 @@ def cmd_status(args) -> None:
     else:
         print(f"  Cookie        : set  (length={cookie_len})")
 
-    from domain.event_calendar import EVENTS, is_calendar_stale
+    from src.domain.event_calendar import EVENTS, is_calendar_stale
 
     if is_calendar_stale():
         most_recent = max(ev["end"] for ev in EVENTS) if EVENTS else "never"
@@ -351,8 +351,8 @@ def cmd_status(args) -> None:
 
 def cmd_monitor(args) -> None:
     """Display Worker Registry + Task Queue statistics."""
-    from domain.connection import SessionLocal, init_db
-    from domain.models import TaskQueue, TaskStatus, WorkerRegistry
+    from src.domain.connection import SessionLocal, init_db
+    from src.domain.models import TaskQueue, TaskStatus, WorkerRegistry
 
     init_db()
 
@@ -451,9 +451,9 @@ def cmd_validate_top(args) -> None:
     """
     import time
 
-    from domain.connection import SessionLocal, init_db
-    from domain.models import TaskQueue
-    from domain.portfolio import get_latest_advice
+    from src.domain.connection import SessionLocal, init_db
+    from src.domain.models import TaskQueue
+    from src.domain.portfolio import get_latest_advice
     from infra.task_manager import TaskQueueService
 
     top_n: int = args.top
@@ -520,7 +520,7 @@ def cmd_watchdog(args) -> None:
     Finds workers with stale heartbeats (> 90s) whose PROCESSING tasks have
     exceeded the per-type TTL.  Reclaimed tasks are reset to PENDING.
     """
-    from domain.connection import init_db
+    from src.domain.connection import init_db
     from infra.task_manager import TASK_TTL, WORKER_STUCK_THRESHOLD_S, TaskQueueService
 
     init_db()

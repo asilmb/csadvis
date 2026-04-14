@@ -28,7 +28,7 @@ from unittest.mock import patch
 
 import pytest
 
-from domain.events import AuthError, LiquidityWarning, PriceAlert, SuperDealDetected
+from src.domain.events import AuthError, LiquidityWarning, PriceAlert, SuperDealDetected
 
 
 def _now() -> datetime:

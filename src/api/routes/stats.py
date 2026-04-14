@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from domain.connection import get_db_dep
+from src.domain.connection import get_db_dep
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/stats", tags=["stats"])
@@ -56,7 +56,7 @@ def get_stats(db: Session = Depends(get_db_dep)) -> PortfolioStats:
     from sqlalchemy import func, select
 
     from config import settings
-    from domain.models import DimContainer, FactContainerPrice, Position, PositionStatus
+    from src.domain.models import DimContainer, FactContainerPrice, Position, PositionStatus
 
     # ── Items tracked (non-blacklisted) ──────────────────────────────────────
     items_tracked: int = db.execute(

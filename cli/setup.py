@@ -45,7 +45,7 @@ def cmd_init(args) -> None:
         sys.exit(1)
 
     # ── DB init + seed ────────────────────────────────────────────────────────
-    from domain.connection import SessionLocal, init_db
+    from src.domain.connection import SessionLocal, init_db
     from seed.data import seed_database
 
     print("[INIT] init_db ......... ", end="", flush=True)
@@ -218,10 +218,10 @@ def cmd_clean(args) -> None:
     # ── WorkerRegistry reset ──────────────────────────────────────────────────
     workers_reset = 0
     try:
-        from domain.connection import SessionLocal, init_db
+        from src.domain.connection import SessionLocal, init_db
 
         init_db()
-        from domain.models import WorkerRegistry
+        from src.domain.models import WorkerRegistry
 
         with SessionLocal() as db:
             workers_reset = db.query(WorkerRegistry).delete(synchronize_session=False)

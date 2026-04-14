@@ -14,7 +14,7 @@ import contextlib
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
-from domain.portfolio import get_container_detail, get_portfolio_data
+from src.domain.portfolio import get_container_detail, get_portfolio_data
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 

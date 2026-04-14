@@ -82,7 +82,7 @@ def init_db() -> None:
     Включает защиту от ошибок 'already exists' при создании ENUM типов PostgreSQL,
     которые могут возникать при одновременном запуске нескольких контейнеров.
     """
-    from domain.models import Base
+    from src.domain.models import Base
 
     try:
         # checkfirst=True корректно обрабатывает таблицы, но для ENUM типов

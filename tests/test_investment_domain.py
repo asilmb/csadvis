@@ -9,8 +9,8 @@ import dataclasses
 
 import pytest
 
-from domain.services import InvestmentDomainService, LiquidityDecision
-from domain.value_objects import Amount
+from src.domain.services import InvestmentDomainService, LiquidityDecision
+from src.domain.value_objects import Amount
 
 
 @pytest.fixture()

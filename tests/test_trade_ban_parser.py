@@ -41,8 +41,8 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from domain.models import Base, DimUserPosition
-from domain.sql_repositories import SqlAlchemyInventoryRepository
+from src.domain.models import Base, DimUserPosition
+from src.domain.sql_repositories import SqlAlchemyInventoryRepository
 from scrapper.steam_inventory import _aggregate, _extract_trade_unlock_at, _parse_page
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────

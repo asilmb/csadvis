@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from domain.value_objects import Amount, ROI
+from src.domain.value_objects import Amount, ROI
 
 # ─── Smart Buy Price ───────────────────────────────────────────────────────────
 

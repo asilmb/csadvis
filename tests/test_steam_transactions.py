@@ -156,15 +156,15 @@ def _mock_resp(data: dict, status: int = 200) -> MagicMock:
 
 class TestFetchMarketHistory:
     def test_no_cookie_returns_empty(self) -> None:
-        with patch("ingestion.steam_transactions.settings", _mock_settings("")):
+        with patch("scrapper.steam_transactions.settings", _mock_settings("")):
             rows, msg = fetch_market_history()
         assert rows == []
         assert msg == "NO_COOKIE"
 
     def test_http_403_returns_error(self) -> None:
         with (
-            patch("ingestion.steam_transactions.settings", _mock_settings()),
-            patch("ingestion.steam_transactions.httpx.get", return_value=_mock_resp({}, 403)),
+            patch("scrapper.steam_transactions.settings", _mock_settings()),
+            patch("scrapper.steam_transactions.httpx.get", return_value=_mock_resp({}, 403)),
         ):
             rows, msg = fetch_market_history()
         assert rows == []
@@ -173,8 +173,8 @@ class TestFetchMarketHistory:
     def test_success_false_returns_error(self) -> None:
         data = {"success": False}
         with (
-            patch("ingestion.steam_transactions.settings", _mock_settings()),
-            patch("ingestion.steam_transactions.httpx.get", return_value=_mock_resp(data)),
+            patch("scrapper.steam_transactions.settings", _mock_settings()),
+            patch("scrapper.steam_transactions.httpx.get", return_value=_mock_resp(data)),
         ):
             rows, msg = fetch_market_history()
         assert rows == []
@@ -187,8 +187,8 @@ class TestFetchMarketHistory:
             "results_html": _SELL_ROW,
         }
         with (
-            patch("ingestion.steam_transactions.settings", _mock_settings()),
-            patch("ingestion.steam_transactions.httpx.get", return_value=_mock_resp(data)),
+            patch("scrapper.steam_transactions.settings", _mock_settings()),
+            patch("scrapper.steam_transactions.httpx.get", return_value=_mock_resp(data)),
         ):
             rows, msg = fetch_market_history(max_pages=1)
         assert len(rows) == 1
@@ -197,8 +197,8 @@ class TestFetchMarketHistory:
 
     def test_network_error_returns_empty(self) -> None:
         with (
-            patch("ingestion.steam_transactions.settings", _mock_settings()),
-            patch("ingestion.steam_transactions.httpx.get", side_effect=Exception("timeout")),
+            patch("scrapper.steam_transactions.settings", _mock_settings()),
+            patch("scrapper.steam_transactions.httpx.get", side_effect=Exception("timeout")),
         ):
             rows, _msg = fetch_market_history(max_pages=1)
         assert rows == []

@@ -1,3 +1,26 @@
+x-app: &app
+  build:
+    context: .
+    dockerfile: Dockerfile
+    target: runtime
+  image: cs2-app:latest
+  restart: unless-stopped
+  stop_grace_period: 30s
+  env_file: .env
+  environment:
+    LOG_DIR: /app/logs
+    PYTHONUNBUFFERED: "1"
+  volumes:
+    - app_data:/app/data
+    - ./logs/app:/app/logs
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  networks:
+    - backend
+
 services:
   # ── TimescaleDB (PostgreSQL 16) ───────────────────────────────────────────────
   db:
@@ -13,7 +36,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cs2pass}
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./logs/db:/var/log/postgresql      # Локальные логи базы данных
+      - ./logs/db:/var/log/postgresql
     networks:
       - backend
     healthcheck:
@@ -23,7 +46,7 @@ services:
       retries: 5
       start_period: 20s
 
-  # ── Redis (Очередь задач и кэш) ──────────────────────────────────────────────
+  # ── Redis ────────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -31,7 +54,6 @@ services:
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
-      - ./logs/redis:/var/log/redis        # Локальные логи Redis
     networks:
       - backend
     healthcheck:
@@ -40,32 +62,12 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── App: Dashboard + REST API ────────────────────────────────────────────────
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: runtime
-    command: ["app"]
-    restart: unless-stopped
-    stop_grace_period: 30s
+  # ── API (FastAPI + uvicorn) ───────────────────────────────────────────────────
+  api:
+    <<: *app
+    command: ["api"]
     ports:
-      - "${DASHBOARD_PORT:-8050}:8050"
       - "${API_PORT:-8000}:8000"
-    env_file: .env
-    environment:
-      LOG_DIR: /app/logs
-      PYTHONUNBUFFERED: "1"
-    volumes:
-      - cs2_data:/data
-      - ./logs/app:/app/logs               # Локальные логи приложения
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - backend
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
@@ -74,66 +76,32 @@ services:
       retries: 3
       start_period: 15s
 
-  # ── Worker: Выполнение фоновых задач Celery ──────────────────────────────────
-  worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: runtime
-    command: ["worker", "--workers", "2"]
-    restart: unless-stopped
-    stop_grace_period: 30s
-    env_file: .env
-    environment:
-      LOG_DIR: /app/logs
-      PYTHONUNBUFFERED: "1"
-    volumes:
-      - cs2_data:/data
-      - backup_data:/app/backups           # Хранилище резервных копий БД
-      - ./logs/worker:/app/logs            # Локальные логи воркера
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - backend
+  # ── UI (Dash dashboard) ───────────────────────────────────────────────────────
+  ui:
+    <<: *app
+    command: ["ui"]
+    ports:
+      - "${DASHBOARD_PORT:-8050}:8050"
 
-  # ── Beat: Планировщик задач Celery ──────────────────────────────────────────
-  beat:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: runtime
-    command: ["worker", "--beat"]
-    restart: unless-stopped
-    stop_grace_period: 30s
-    env_file: .env
-    environment:
-      LOG_DIR: /app/logs
-      PYTHONUNBUFFERED: "1"
-    volumes:
-      - cs2_data:/data
-      - backup_data:/app/backups           # Хранилище резервных копий БД
-      - ./logs/beat:/app/logs              # Локальные логи планировщика
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - backend
+  # ── Scrapper (one-shot market sync) ──────────────────────────────────────────
+  scrapper:
+    <<: *app
+    command: ["scrapper"]
+    restart: "no"
+
+  # ── Worker (Celery background tasks) ─────────────────────────────────────────
+  worker:
+    <<: *app
+    command: ["worker"]
 
 networks:
   backend:
     driver: bridge
 
 volumes:
-  cs2_data:
-    driver: local
   pgdata:
     driver: local
   redis_data:
     driver: local
-  backup_data:
+  app_data:
     driver: local

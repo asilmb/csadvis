@@ -15,14 +15,14 @@ from typing import Any
 
 import pytest
 
-from domain.specifications import (
+from src.domain.specifications import (
     PriceWithinRange,
     ROIAbove,
     Specification,
     VolumeAbove,
     ZScoreBelow,
 )
-from domain.value_objects import Amount, ROI
+from src.domain.value_objects import Amount, ROI
 
 # ─── Test helpers ─────────────────────────────────────────────────────────────
 

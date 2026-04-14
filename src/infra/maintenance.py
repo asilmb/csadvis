@@ -51,8 +51,8 @@ class MaintenanceService:
 
         Returns the number of deleted rows.
         """
-        from domain.connection import SessionLocal
-        from domain.models import TaskQueue, TaskStatus
+        from src.domain.connection import SessionLocal
+        from src.domain.models import TaskQueue, TaskStatus
 
         cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=older_than_hours)
 
@@ -95,8 +95,8 @@ class MaintenanceService:
         """
         from sqlalchemy import or_
 
-        from domain.connection import SessionLocal
-        from domain.models import EventLog
+        from src.domain.connection import SessionLocal
+        from src.domain.models import EventLog
 
         now = datetime.now(UTC).replace(tzinfo=None)
         old_cutoff = now - timedelta(days=older_than_days)
@@ -133,7 +133,7 @@ class MaintenanceService:
         inside an explicit transaction block. Using AUTOCOMMIT isolation level
         ensures SQLAlchemy does not wrap the statement in an implicit transaction.
         """
-        from domain.connection import engine
+        from src.domain.connection import engine
 
         with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
             conn.execute(text("VACUUM ANALYZE"))

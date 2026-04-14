@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import pytest
 
-from domain.analytics.armory_advisor import (
+from src.domain.analytics.armory_advisor import (
     STEAM_NET_MULTIPLIER,
     ArmoryAdvisor,
     PassEfficiencyResult,

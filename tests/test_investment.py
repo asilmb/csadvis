@@ -14,7 +14,7 @@ All price values are in KZT. Reference rate: ~481₸/$.
 
 from __future__ import annotations
 
-from domain.investment import compute_all_investment_signals, compute_investment_signal
+from src.domain.investment import compute_all_investment_signals, compute_investment_signal
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

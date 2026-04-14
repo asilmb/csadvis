@@ -31,8 +31,8 @@ class CookieStatusResponse(BaseModel):
 
 @router.get("/cookie-status", response_model=CookieStatusResponse)
 def cookie_status_endpoint() -> CookieStatusResponse:
-    from domain.connection import SessionLocal
-    from domain.sql_repositories import get_cookie_status
+    from src.domain.connection import SessionLocal
+    from src.domain.sql_repositories import get_cookie_status
     with SessionLocal() as db:
         status = get_cookie_status(db)
     return CookieStatusResponse(status=status)
@@ -77,8 +77,8 @@ def update_cookie_endpoint(req: UpdateCookieRequest) -> dict:
     # 5. Save session note if provided (never logs the cookie itself)
     if req.session_note.strip():
         try:
-            from domain.connection import SessionLocal as _SL
-            from domain.models import SystemSettings
+            from src.domain.connection import SessionLocal as _SL
+            from src.domain.models import SystemSettings
             from datetime import UTC, datetime
             with _SL() as _db:
                 row = _db.get(SystemSettings, "last_auth_note")
@@ -94,7 +94,7 @@ def update_cookie_endpoint(req: UpdateCookieRequest) -> dict:
             logger.warning("Could not save session note: %s", exc)
 
     # 6. Reset all FAILED + PAUSED_AUTH tasks to PENDING + release workers
-    from domain.connection import SessionLocal
+    from src.domain.connection import SessionLocal
     from sqlalchemy import text
     with SessionLocal() as db:
         reset_count = db.execute(

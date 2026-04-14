@@ -2,8 +2,8 @@ import dataclasses
 
 import pytest
 
-from domain.services import SuperDealDomainService
-from domain.value_objects import Amount, ROI
+from src.domain.services import SuperDealDomainService
+from src.domain.value_objects import Amount, ROI
 
 # ---------------------------------------------------------------------------
 # Helpers

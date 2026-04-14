@@ -14,8 +14,8 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from domain.connection import get_db_dep
-from domain.dtos import ItemDTO, PriceHistoryDTO
+from src.domain.connection import get_db_dep
+from src.domain.dtos import ItemDTO, PriceHistoryDTO
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/items", tags=["items"])
@@ -26,8 +26,8 @@ router = APIRouter(prefix="/items", tags=["items"])
 
 def _get_item_service(db: Session = Depends(get_db_dep)):
     """Inject ItemService bound to the request's DB session."""
-    from domain.sql_repositories import SqlAlchemyInventoryRepository
-    from domain.item_service import ItemService
+    from src.domain.sql_repositories import SqlAlchemyInventoryRepository
+    from src.domain.item_service import ItemService
 
     return ItemService(SqlAlchemyInventoryRepository(db))
 
@@ -38,7 +38,7 @@ def _get_tier_map(db: Session) -> dict[str, int]:
     Returns empty dict on any error (tier filtering degrades gracefully).
     """
     try:
-        from domain.models import SystemSettings
+        from src.domain.models import SystemSettings
         from sqlalchemy import select
 
         rows = db.execute(
@@ -123,8 +123,8 @@ def get_item_history(
     history = svc.get_price_history(item_id)
     if not history:
         # Distinguish 404 (unknown item) from 200-empty (no prices yet)
-        from domain.connection import SessionLocal
-        from domain.models import DimContainer
+        from src.domain.connection import SessionLocal
+        from src.domain.models import DimContainer
         with SessionLocal() as check_db:
             exists = check_db.get(DimContainer, item_id) is not None
         if not exists:

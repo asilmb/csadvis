@@ -43,9 +43,9 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from domain.models import Base
-from domain.sql_repositories import PositionDTO, SqlAlchemyPositionRepository
-from domain.trade_ledger import STEAM_NET_MULTIPLIER, TradeService
+from src.domain.models import Base
+from src.domain.sql_repositories import PositionDTO, SqlAlchemyPositionRepository
+from src.domain.trade_ledger import STEAM_NET_MULTIPLIER, TradeService
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
 

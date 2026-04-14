@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from domain.event_loader import load_events
+from src.domain.event_loader import load_events
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 

@@ -10,10 +10,10 @@ import dash_bootstrap_components as dbc
 from dash import dcc, html
 
 from config import settings
-from domain.connection import SessionLocal
-from domain.models import DimUserPosition
-from domain.portfolio_advisor import allocate_portfolio
-from domain.trade_advisor import compute_trade_advice
+from src.domain.connection import SessionLocal
+from src.domain.models import DimUserPosition
+from src.domain.portfolio_advisor import allocate_portfolio
+from src.domain.trade_advisor import compute_trade_advice
 from ui.helpers import (
     _BG,
     _BG2,
@@ -91,7 +91,7 @@ def _render_portfolio(
         )
 
     # CACHE-1: try reading cached plan first — avoids full engine recompute on every render
-    from domain.portfolio import get_cached_portfolio_advice
+    from src.domain.portfolio import get_cached_portfolio_advice
 
     _cached_plan = get_cached_portfolio_advice()
 

@@ -15,9 +15,9 @@ import structlog
 import uvicorn
 from fastapi import FastAPI
 
-from api.app import create_app
+from src.api.app import create_app
 from config import settings
-from domain.connection import SessionLocal, engine, init_db
+from src.domain.connection import SessionLocal, engine, init_db
 from infra.logger import configure_logging
 from seed.data import seed_database
 

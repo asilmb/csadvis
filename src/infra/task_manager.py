@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 # Re-export TaskDTO so callers import from a single place.
-from domain.sql_repositories import SqlAlchemyTaskQueueRepository, TaskDTO
+from src.domain.sql_repositories import SqlAlchemyTaskQueueRepository, TaskDTO
 
 
 @dataclass
@@ -88,7 +88,7 @@ class TaskQueueService:
         priority:   1=HIGH, 2=MEDIUM, 3=LOW.
         payload:    Arbitrary JSON-serialisable dict of task parameters.
         """
-        from domain.connection import SessionLocal
+        from src.domain.connection import SessionLocal
 
         with SessionLocal() as db:
             repo = SqlAlchemyTaskQueueRepository(db)
@@ -101,7 +101,7 @@ class TaskQueueService:
         Claim and return the next eligible task (PENDING or RETRY, highest priority).
         Returns None when the queue is empty.  Claimed task moves to PROCESSING.
         """
-        from domain.connection import SessionLocal
+        from src.domain.connection import SessionLocal
 
         with SessionLocal() as db:
             repo = SqlAlchemyTaskQueueRepository(db)
@@ -111,7 +111,7 @@ class TaskQueueService:
 
     def complete(self, task_id: str) -> None:
         """Mark a PROCESSING task as COMPLETED."""
-        from domain.connection import SessionLocal
+        from src.domain.connection import SessionLocal
 
         with SessionLocal() as db:
             repo = SqlAlchemyTaskQueueRepository(db)
@@ -125,7 +125,7 @@ class TaskQueueService:
         When retries < max_retries the task is re-queued (RETRY).
         At max_retries it is permanently marked FAILED.
         """
-        from domain.connection import SessionLocal
+        from src.domain.connection import SessionLocal
 
         with SessionLocal() as db:
             repo = SqlAlchemyTaskQueueRepository(db)
@@ -135,7 +135,7 @@ class TaskQueueService:
 
     def requeue_pending(self, task_id: str) -> None:
         """Reset task to PENDING without incrementing retry counter (network backoff path)."""
-        from domain.connection import SessionLocal
+        from src.domain.connection import SessionLocal
 
         with SessionLocal() as db:
             repo = SqlAlchemyTaskQueueRepository(db)
@@ -149,7 +149,7 @@ class TaskQueueService:
         Create a task directly in PROCESSING state for subsystems that own their
         own execution (e.g. scraper).  Returns the created TaskDTO.
         """
-        from domain.connection import SessionLocal
+        from src.domain.connection import SessionLocal
 
         with SessionLocal() as db:
             repo = SqlAlchemyTaskQueueRepository(db)
@@ -160,7 +160,7 @@ class TaskQueueService:
     def update_task_progress(self, task_id: str, progress: dict) -> None:
         """Merge progress dict into task payload for live UI visibility (best-effort)."""
         try:
-            from domain.connection import SessionLocal
+            from src.domain.connection import SessionLocal
             with SessionLocal() as db:
                 repo = SqlAlchemyTaskQueueRepository(db)
                 repo.update_task_progress(task_id, progress)
@@ -189,8 +189,8 @@ class TaskQueueService:
 
         Returns the number of tasks reclaimed (PENDING or FAILED).
         """
-        from domain.connection import SessionLocal
-        from domain.models import TaskQueue, TaskStatus, WorkerRegistry
+        from src.domain.connection import SessionLocal
+        from src.domain.models import TaskQueue, TaskStatus, WorkerRegistry
 
         now = datetime.now(UTC).replace(tzinfo=None)
         stuck_cutoff = now - timedelta(seconds=WORKER_STUCK_THRESHOLD_S)
@@ -255,7 +255,7 @@ class TaskQueueService:
         Apply watchdog retry logic to a single TaskQueue ORM row (already loaded).
         Mutates in-place; caller must commit.  Returns 1 (always reclaimed).
         """
-        from domain.models import TaskStatus
+        from src.domain.models import TaskStatus
 
         new_retries = (task.retries or 0) + 1
         task.retries = new_retries
@@ -271,7 +271,7 @@ class TaskQueueService:
 
     def pause_auth(self, task_id: str) -> None:
         """Mark a PROCESSING task as PAUSED_AUTH (auth-loop detected)."""
-        from domain.connection import SessionLocal
+        from src.domain.connection import SessionLocal
 
         with SessionLocal() as db:
             repo = SqlAlchemyTaskQueueRepository(db)
@@ -280,7 +280,7 @@ class TaskQueueService:
 
     def has_paused_auth_tasks(self) -> bool:
         """Return True if any task is currently PAUSED_AUTH."""
-        from domain.connection import SessionLocal
+        from src.domain.connection import SessionLocal
 
         with SessionLocal() as db:
             repo = SqlAlchemyTaskQueueRepository(db)
@@ -288,8 +288,8 @@ class TaskQueueService:
 
     def flush_failed(self) -> int:
         """Delete all FAILED tasks from the queue. Returns count deleted."""
-        from domain.connection import SessionLocal
-        from domain.models import TaskQueue, TaskStatus
+        from src.domain.connection import SessionLocal
+        from src.domain.models import TaskQueue, TaskStatus
 
         with SessionLocal() as db:
             count = (
@@ -305,8 +305,8 @@ class TaskQueueService:
         Force all workers with STUCK/DEAD status back to IDLE and clear their task lock.
         Returns count of workers reset.
         """
-        from domain.connection import SessionLocal
-        from domain.models import WorkerRegistry
+        from src.domain.connection import SessionLocal
+        from src.domain.models import WorkerRegistry
 
         with SessionLocal() as db:
             workers = (
@@ -322,8 +322,8 @@ class TaskQueueService:
 
     def get_system_health(self) -> "SystemHealth":
         """Return a health snapshot for the System Status dashboard tab."""
-        from domain.connection import SessionLocal
-        from domain.models import TaskQueue, TaskStatus, WorkerRegistry
+        from src.domain.connection import SessionLocal
+        from src.domain.models import TaskQueue, TaskStatus, WorkerRegistry
 
         now = datetime.now(UTC).replace(tzinfo=None)
 

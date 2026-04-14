@@ -14,10 +14,10 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from domain.connection import get_db_dep
-from domain.models import DimContainer, FactContainerPrice
-from domain.investment import compute_all_investment_signals
-from domain.portfolio import get_portfolio_data
+from src.domain.connection import get_db_dep
+from src.domain.models import DimContainer, FactContainerPrice
+from src.domain.investment import compute_all_investment_signals
+from src.domain.portfolio import get_portfolio_data
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/containers", tags=["containers"])

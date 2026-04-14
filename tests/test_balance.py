@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-from domain.portfolio import compute_pnl
+from src.domain.portfolio import compute_pnl
 
 # ── compute_pnl ───────────────────────────────────────────────────────────────
 

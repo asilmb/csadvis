@@ -402,7 +402,7 @@ class TestBackfillHistoryTask:
 
         with patch("scheduler.tasks._is_stealth_blocked", return_value=False), \
              patch("domain.connection.SessionLocal", return_value=mock_session), \
-             patch("ingestion.steam.client.SteamMarketClient", side_effect=RuntimeError("no cookie")):
+             patch("scrapper.steam.client.SteamMarketClient", side_effect=RuntimeError("no cookie")):
             result = backfill_history_task.run()
 
         assert result["status"] == "skipped"
@@ -442,7 +442,7 @@ class TestBackfillHistoryTask:
 
         with patch("scheduler.tasks._is_stealth_blocked", return_value=False), \
              patch("domain.connection.SessionLocal", return_value=mock_session), \
-             patch("ingestion.steam.client.SteamMarketClient", return_value=mock_steam):
+             patch("scrapper.steam.client.SteamMarketClient", return_value=mock_steam):
             result = backfill_history_task.run()
 
         assert result["skipped_checkpoint"] == 1
@@ -477,9 +477,9 @@ class TestBackfillHistoryTask:
 
         with patch("scheduler.tasks._is_stealth_blocked", return_value=False), \
              patch("domain.connection.SessionLocal", return_value=mock_session), \
-             patch("ingestion.steam.client.SteamMarketClient", return_value=mock_steam), \
+             patch("scrapper.steam.client.SteamMarketClient", return_value=mock_steam), \
              patch("scheduler.tasks._trigger_stealth_block") as mock_block, \
-             patch("ingestion.steam.formatter.to_api_name", return_value="Horizon+Case"), \
+             patch("scrapper.steam.formatter.to_api_name", return_value="Horizon+Case"), \
              patch("asyncio.new_event_loop", return_value=mock_loop):
             with pytest.raises(Retry):
                 backfill_history_task.run.__func__(mock_self)

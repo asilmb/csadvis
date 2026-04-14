@@ -10,9 +10,9 @@ import dash_bootstrap_components as dbc
 from dash import dcc, html
 
 from config import settings
-from domain.connection import SessionLocal
-from domain.models import DimContainer, DimUserPosition
-from domain.trade_advisor import compute_trade_advice
+from src.domain.connection import SessionLocal
+from src.domain.models import DimContainer, DimUserPosition
+from src.domain.trade_advisor import compute_trade_advice
 from ui.helpers import (
     _BG2,
     _BLUE,
@@ -176,7 +176,7 @@ def _render_market(
         # cost_basis = buy_price from dim_user_positions (user's actual purchase price)
         # Falls back to base_cost if no position record found.
         if owned_count > 0:
-            from domain.connection import SessionLocal as _SL
+            from src.domain.connection import SessionLocal as _SL
 
             _pos_db2 = _SL()
             try:

@@ -22,7 +22,7 @@ import os
 from pathlib import Path
 
 from config import settings
-from domain.connection import SessionLocal, init_db
+from src.domain.connection import SessionLocal, init_db
 from ui.app import create_dash_app
 from seed.data import seed_database
 

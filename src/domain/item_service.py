@@ -31,7 +31,7 @@ from datetime import UTC, datetime, timedelta
 
 import structlog
 
-from domain.repositories import InventoryRepository
+from src.domain.repositories import InventoryRepository
 
 logger = structlog.get_logger()
 
@@ -121,7 +121,7 @@ class ItemService:
         -------
         list[ItemDTO]
         """
-        from domain.dtos import ItemDTO
+        from src.domain.dtos import ItemDTO
 
         # ── Step 1: base data from InventoryRepository ────────────────────────
         base_items: list[dict] = self._repo.get_all_items()
@@ -132,7 +132,7 @@ class ItemService:
         name_to_meta: dict[str, dict] = {}
         if self._db is not None:
             try:
-                from domain.models import DimContainer
+                from src.domain.models import DimContainer
                 rows = self._db.query(
                     DimContainer.container_id,
                     DimContainer.container_name,
@@ -150,7 +150,7 @@ class ItemService:
         prices_by_name: dict[str, list[float]] = defaultdict(list)
         if self._db is not None:
             try:
-                from domain.models import DimContainer, FactContainerPrice
+                from src.domain.models import DimContainer, FactContainerPrice
                 cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=30)
                 recent = (
                     self._db.query(
@@ -214,14 +214,14 @@ class ItemService:
 
         Returns None when the container is not found or has no price history.
         """
-        from domain.dtos import ItemDTO
+        from src.domain.dtos import ItemDTO
 
         if self._db is None:
             logger.warning("no_db_session", service="item_service", method="get_item_details")
             return None
 
         try:
-            from domain.models import DimContainer, FactContainerPrice
+            from src.domain.models import DimContainer, FactContainerPrice
             from sqlalchemy import func
 
             container = self._db.get(DimContainer, item_id)
@@ -287,13 +287,13 @@ class ItemService:
 
         Returns an empty list when no price rows exist.
         """
-        from domain.dtos import PriceHistoryDTO
+        from src.domain.dtos import PriceHistoryDTO
 
         if self._db is None:
             return []
 
         try:
-            from domain.models import DimContainer, FactContainerPrice
+            from src.domain.models import DimContainer, FactContainerPrice
 
             container = self._db.get(DimContainer, item_id)
             if container is None:
@@ -333,13 +333,13 @@ class ItemService:
         Returns {container_id: list[PriceHistoryDTO]} sorted by timestamp ascending.
         Missing container IDs map to an empty list.
         """
-        from domain.dtos import PriceHistoryDTO
+        from src.domain.dtos import PriceHistoryDTO
 
         if self._db is None or not container_ids:
             return {cid: [] for cid in container_ids}
 
         try:
-            from domain.models import FactContainerPrice
+            from src.domain.models import FactContainerPrice
 
             q = (
                 self._db.query(FactContainerPrice)
@@ -389,7 +389,7 @@ class ItemService:
         -------
         dict[container_id_or_name → {verdict, score, ...}]
         """
-        from domain.portfolio import get_cached_signals
+        from src.domain.portfolio import get_cached_signals
         cached = get_cached_signals()
         if cached:
             return cached
@@ -402,13 +402,13 @@ class ItemService:
         price_data = {item.name: item.to_price_dict() for item in items}
 
         try:
-            from domain.connection import SessionLocal
-            from domain.models import DimContainer
+            from src.domain.connection import SessionLocal
+            from src.domain.models import DimContainer
 
             with SessionLocal() as db:
                 containers = db.query(DimContainer).all()
 
-            from domain.investment import compute_all_investment_signals
+            from src.domain.investment import compute_all_investment_signals
             return compute_all_investment_signals(containers, price_data)
         except Exception as exc:
             logger.error("get_signals_error", service="item_service", error=str(exc))
@@ -449,9 +449,9 @@ class ItemService:
             return False
 
         # ── Resolve container ─────────────────────────────────────────────────
-        from domain.connection import SessionLocal
-        from domain.models import DimContainer
-        from domain.sql_repositories import SqlAlchemyPriceRepository
+        from src.domain.connection import SessionLocal
+        from src.domain.models import DimContainer
+        from src.domain.sql_repositories import SqlAlchemyPriceRepository
 
         with SessionLocal() as db:
             container = db.get(DimContainer, item_id)
@@ -471,7 +471,7 @@ class ItemService:
             container_name: str = str(container.container_name)
 
             # ── PV-06 Sanity Check: anomaly detection ─────────────────────────
-            from domain.models import FactContainerPrice
+            from src.domain.models import FactContainerPrice
 
             cutoff_sanity = (
                 datetime.now(UTC).replace(tzinfo=None) - timedelta(days=_SANITY_WINDOW_DAYS)
@@ -532,7 +532,7 @@ class ItemService:
         Usage (inside a ``with SessionLocal() as db:`` block):
             svc = ItemService.from_session(db)
         """
-        from domain.sql_repositories import SqlAlchemyInventoryRepository
+        from src.domain.sql_repositories import SqlAlchemyInventoryRepository
         return cls(SqlAlchemyInventoryRepository(db))
 
     @classmethod
@@ -543,8 +543,8 @@ class ItemService:
         Caller is responsible for calling ``.close()`` when done, OR use
         ItemService.from_session() inside a managed context instead.
         """
-        from domain.connection import SessionLocal
-        from domain.sql_repositories import SqlAlchemyInventoryRepository
+        from src.domain.connection import SessionLocal
+        from src.domain.sql_repositories import SqlAlchemyInventoryRepository
 
         db = SessionLocal()
         svc = cls(SqlAlchemyInventoryRepository(db))

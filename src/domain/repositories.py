@@ -3,14 +3,14 @@ Domain repository interfaces.
 
 These ABCs define the contract between the domain/services layer and the
 infrastructure layer (SQLAlchemy). Concrete implementations live in
-database/repositories.py and must not import domain logic.
+database/repositories.py and must not import src.domain logic.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from domain.value_objects import Amount
+from src.domain.value_objects import Amount
 
 
 class InventoryRepository(ABC):

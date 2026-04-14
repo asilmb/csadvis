@@ -15,11 +15,11 @@ import plotly.graph_objects as go
 from dash import html
 
 from config import settings as _settings
-from domain.connection import SessionLocal
-from domain.models import DimContainer
+from src.domain.connection import SessionLocal
+from src.domain.models import DimContainer
 from ui.cache import cache
 from ui.theme import COLORS
-from domain.portfolio import get_portfolio_data
+from src.domain.portfolio import get_portfolio_data
 
 # ─── Fee constants ─────────────────────────────────────────────────────────────
 _FEE_DIV = _settings.steam_fee_divisor  # 1.15
@@ -70,7 +70,7 @@ def _get_current_steam_prices() -> dict:
     Falls back to portfolio.get_portfolio_data() on ItemService failure.
     """
     try:
-        from domain.item_service import ItemService
+        from src.domain.item_service import ItemService
 
         svc = ItemService.open()
         try:
@@ -122,7 +122,7 @@ def _get_all_price_histories(
     """
     if not container_ids:
         return {}
-    from domain.item_service import ItemService
+    from src.domain.item_service import ItemService
 
     svc = ItemService.open()
     try:
@@ -140,7 +140,7 @@ def _get_price_history(container_id: str, source: str | None = None) -> list:
     source=None         → all records (full history for chart)
     source="steam_live" → live price snapshots only (used for trade targets)
     """
-    from domain.item_service import ItemService
+    from src.domain.item_service import ItemService
 
     svc = ItemService.open()
     try:

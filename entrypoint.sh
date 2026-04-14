@@ -19,7 +19,7 @@ fi
 # ── 2. DB initialisation / migrations ─────────────────────────────────────────
 echo "INFO: Connecting to PostgreSQL at ${DB_HOST:-db}:${DB_PORT:-5432}/${POSTGRES_DB:-cs2} ..."
 python - <<'EOF'
-from database.connection import init_db
+from src.domain.connection import init_db
 init_db()
 print("INFO: Database ready.")
 EOF

@@ -7,7 +7,7 @@ import structlog
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes import (
+from src.api.routes import (
     auth_router,
     containers_router,
     items_router,

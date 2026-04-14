@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from domain.portfolio_advisor import (
+from src.domain.portfolio_advisor import (
     _compute_cagr,
     _compute_zscore,
     _consecutive_days_below,

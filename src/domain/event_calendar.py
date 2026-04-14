@@ -130,7 +130,7 @@ def _load_events_or_fallback() -> list[dict]:
     """
     try:
         from config import settings
-        from domain.event_loader import load_events
+        from src.domain.event_loader import load_events
 
         events = load_events(settings.events_yaml_path)
         logger.debug(

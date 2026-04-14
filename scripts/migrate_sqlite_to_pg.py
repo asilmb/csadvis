@@ -33,8 +33,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from config import settings
-from domain.models import Base, DimContainer
-from domain.postgres_repo import PostgresRepository
+from src.domain.models import Base, DimContainer
+from src.domain.postgres_repo import PostgresRepository
 
 # ─── Helpers ───────────────────────────────────────────────────────────────────
 

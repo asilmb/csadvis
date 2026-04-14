@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from domain.event_calendar import (
+from src.domain.event_calendar import (
     _POST_EVENT_DAYS,
     _PRE_EVENT_DAYS,
     EVENTS,
@@ -197,7 +197,7 @@ class TestIsCalendarStale:
 
     def test_empty_events_list_always_stale(self) -> None:
         # Monkey-patch: temporarily empty the EVENTS list
-        import domain.event_calendar as ec
+        import src.domain.event_calendar as ec
 
         original = ec.EVENTS[:]
         try:

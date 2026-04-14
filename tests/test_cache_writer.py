@@ -80,7 +80,7 @@ def test_write_portfolio_advice_deletes_then_adds(mock_db):
 
 def test_write_portfolio_advice_row_fields(mock_db):
     """The inserted FactPortfolioAdvice row has correct scalar fields."""
-    from domain.models import FactPortfolioAdvice
+    from src.domain.models import FactPortfolioAdvice
 
     captured = []
     mock_db.add.side_effect = lambda row: captured.append(row)
@@ -143,7 +143,7 @@ def test_write_portfolio_advice_no_commit_called(mock_db):
 
 def test_write_investment_signals_bulk_insert(mock_db):
     """One row per container_id is passed to bulk_save_objects."""
-    from domain.models import FactInvestmentSignal
+    from src.domain.models import FactInvestmentSignal
 
     now = datetime(2026, 3, 28, 12, 0, 0)
     write_investment_signals(mock_db, _minimal_signals(), now)
@@ -308,7 +308,7 @@ def test_write_investment_signals_ratio_momentum_mapped_from_engine_keys(mock_db
 
 def test_get_cached_portfolio_advice_returns_none_on_empty():
     """Returns None when fact_portfolio_advice table is empty."""
-    from domain.portfolio import get_cached_portfolio_advice
+    from src.domain.portfolio import get_cached_portfolio_advice
 
     mock_db_instance = MagicMock()
     mock_query = MagicMock()
@@ -324,8 +324,8 @@ def test_get_cached_portfolio_advice_returns_none_on_empty():
 
 def test_get_cached_portfolio_advice_deserialises_json():
     """Returns a dict with flip/invest deserialised from JSON strings."""
-    from domain.models import FactPortfolioAdvice
-    from domain.portfolio import get_cached_portfolio_advice
+    from src.domain.models import FactPortfolioAdvice
+    from src.domain.portfolio import get_cached_portfolio_advice
 
     fake_row = MagicMock(spec=FactPortfolioAdvice)
     fake_row.computed_at = datetime(2026, 3, 28, 10, 0, 0)
@@ -359,7 +359,7 @@ def test_get_cached_portfolio_advice_deserialises_json():
 
 def test_get_cached_signals_returns_empty_on_no_data():
     """Returns empty dict when fact_investment_signals table is empty."""
-    from domain.portfolio import get_cached_signals
+    from src.domain.portfolio import get_cached_signals
 
     mock_db_instance = MagicMock()
     mock_query = MagicMock()
@@ -374,8 +374,8 @@ def test_get_cached_signals_returns_empty_on_no_data():
 
 def test_get_cached_signals_returns_latest_batch():
     """Returns all rows from the most-recent computed_at batch as a dict."""
-    from domain.models import FactInvestmentSignal
-    from domain.portfolio import get_cached_signals
+    from src.domain.models import FactInvestmentSignal
+    from src.domain.portfolio import get_cached_signals
 
     ts = datetime(2026, 3, 28, 12, 0, 0)
 

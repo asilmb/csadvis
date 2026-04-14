@@ -2,7 +2,7 @@ import dataclasses
 
 import pytest
 
-from domain.value_objects import Amount, ROI, Percentage
+from src.domain.value_objects import Amount, ROI, Percentage
 
 # ---------------------------------------------------------------------------
 # KZT — rounding
