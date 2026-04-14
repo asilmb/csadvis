@@ -60,3 +60,14 @@ desktop.ini
 *.db-shm
 *.db-wal
 
+# Claude Code / BMAD
+.claude/
+_bmad/
+CLAUDE*.md
+STATUS.md
+
+# Documentation
+context/
+*.md
+!.github/**/*.md
+
