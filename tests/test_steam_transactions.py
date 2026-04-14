@@ -55,7 +55,7 @@ id="history_row_333_sell" class="market_listing_row market_recent_listing_row">
 
 class TestParseHistoryHtml:
     def test_parses_sell_row(self) -> None:
-        rows = _parse_history_html(_SELL_ROW)
+        rows = _parse_history_html({"html": _SELL_ROW})
         assert len(rows) == 1
         r = rows[0]
         assert r["action"] == "SELL"
@@ -65,7 +65,7 @@ class TestParseHistoryHtml:
         assert r["listing_id"] == "111"
 
     def test_parses_buy_row(self) -> None:
-        rows = _parse_history_html(_BUY_ROW)
+        rows = _parse_history_html({"html": _BUY_ROW})
         assert len(rows) == 1
         r = rows[0]
         assert r["action"] == "BUY"
@@ -74,21 +74,21 @@ class TestParseHistoryHtml:
         assert r["price"] == pytest.approx(1800.0)
 
     def test_filters_non_cs2(self) -> None:
-        rows = _parse_history_html(_NON_CS2_ROW)
+        rows = _parse_history_html({"html": _NON_CS2_ROW})
         assert rows == []
 
     def test_mixed_html(self) -> None:
         html = _SELL_ROW + _NON_CS2_ROW + _BUY_ROW
-        rows = _parse_history_html(html)
+        rows = _parse_history_html({"html": html})
         assert len(rows) == 2
         actions = {r["action"] for r in rows}
         assert actions == {"SELL", "BUY"}
 
     def test_empty_html(self) -> None:
-        assert _parse_history_html("") == []
+        assert _parse_history_html({"html": ""}) == []
 
     def test_no_valid_rows(self) -> None:
-        assert _parse_history_html("<html><body>nothing</body></html>") == []
+        assert _parse_history_html({"html": "<html><body>nothing</body></html>"}) == []
 
 
 # ── compute_annual_pnl ────────────────────────────────────────────────────────
@@ -220,7 +220,7 @@ id="history_row_999_sell" class="market_listing_row market_recent_listing_row">
   <span title="Mar 15, 2024">Mar 15</span>
   <div class="can_combine"><span>2 450 ₸</span></div>
 """
-        rows = _parse_history_html(html)
+        rows = _parse_history_html({"html": html})
         assert len(rows) == 1
         assert rows[0]["action"] == "SELL"
 
@@ -233,6 +233,6 @@ id="history_row_888_buy" class="market_listing_row market_recent_listing_row">
   <span title="Jan 5, 2024">Jan 5</span>
   <div class="can_combine"><span>1 800 ₸</span></div>
 """
-        rows = _parse_history_html(html)
+        rows = _parse_history_html({"html": html})
         assert len(rows) == 1
         assert rows[0]["action"] == "BUY"
