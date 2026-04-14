@@ -18,8 +18,6 @@ import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from config import settings
-
 from sqlalchemy import (
     BigInteger,
     Column,
@@ -279,6 +277,33 @@ class PositionStatus(StrEnum):
     CLOSED = "CLOSED"
 
 
+# ─── Position domain exceptions ───────────────────────────────────────────────
+
+
+class PositionError(Exception):
+    """Base exception for invariant violations on the Position entity."""
+
+
+class PositionAlreadyClosedError(PositionError):
+    """
+    Raised when a state-change method is called on an already-CLOSED position.
+
+    Example:
+        position.close()  # first call — OK
+        position.close()  # second call — raises PositionAlreadyClosedError
+    """
+
+
+class InvalidPositionError(PositionError):
+    """
+    Raised when Position.open() is called with arguments that violate domain
+    invariants (e.g. non-positive buy_price or zero quantity).
+    """
+
+
+# ─── Position entity ──────────────────────────────────────────────────────────
+
+
 class Position(Base):
     """Inventory position ledger — tracks individual Steam assets for P&L (PV-31)."""
 
@@ -307,8 +332,113 @@ class Position(Base):
     def __repr__(self) -> str:
         return (
             f"<Position {self.market_hash_name!r} asset={self.asset_id}"
-            f" x{self.quantity} @ {self.buy_price:.0f}{settings.currency_symbol} [{self.status}]>"
+            f" x{self.quantity} @ {self.buy_price:.0f} [{self.status}]>"
         )
+
+    # ── Factory ───────────────────────────────────────────────────────────────
+
+    @classmethod
+    def open(
+        cls,
+        asset_id: int,
+        market_hash_name: str,
+        buy_price: float,
+        quantity: int = 1,
+    ) -> "Position":
+        """
+        Create a new OPEN position.
+
+        Enforces domain invariants before construction:
+          - buy_price must be > 0
+          - quantity must be >= 1
+
+        Raises InvalidPositionError on violation.
+        Does NOT add to the session — caller is responsible.
+        """
+        if buy_price <= 0:
+            raise InvalidPositionError(
+                f"buy_price must be positive, got {buy_price!r}"
+            )
+        if quantity < 1:
+            raise InvalidPositionError(
+                f"quantity must be at least 1, got {quantity!r}"
+            )
+        return cls(
+            asset_id=asset_id,
+            market_hash_name=market_hash_name,
+            buy_price=buy_price,
+            quantity=quantity,
+            # Explicitly set status so the invariant holds in pure-Python tests
+            # (SQLAlchemy column defaults only fire at INSERT time, not at
+            # object-construction time).
+            status=PositionStatus.OPEN,
+        )
+
+    # ── State transitions ─────────────────────────────────────────────────────
+
+    def close(self) -> None:
+        """
+        Transition this position from OPEN → CLOSED.
+
+        Sets closed_at to the current UTC timestamp.
+        Raises PositionAlreadyClosedError when the position is already CLOSED —
+        prevents the entity from entering an inconsistent state (double-close).
+
+        Does NOT flush or commit — the caller (repository) owns the transaction.
+        """
+        if self.status == PositionStatus.CLOSED:
+            raise PositionAlreadyClosedError(
+                f"Position {self.id!r} ({self.market_hash_name!r}) is already CLOSED"
+            )
+        self.status = PositionStatus.CLOSED
+        self.closed_at = datetime.now(UTC).replace(tzinfo=None)
+
+    def update_identity(
+        self,
+        new_asset_id: int,
+        new_classid: str | None = None,
+        new_market_id: str | None = None,
+        is_on_market: bool | None = None,
+    ) -> None:
+        """
+        Update Steam asset identity fields in-place.
+
+        Called by the reconciler when a newer asset_id, classid, or market_id
+        is discovered for this position (e.g. after inventory re-index).
+        Does NOT flush or commit — caller owns the transaction.
+        """
+        self.asset_id = new_asset_id
+        if new_classid is not None:
+            self.classid = new_classid
+        if new_market_id is not None:
+            self.market_id = new_market_id
+        if is_on_market is not None:
+            self.is_on_market = int(is_on_market)
+
+    def list_on_market(self, market_id: str) -> None:
+        """
+        Mark this position as actively listed on Steam Market.
+
+        Sets is_on_market = 1 and records the Steam listing ID.
+        Raises PositionAlreadyClosedError when called on a CLOSED position —
+        a sold item cannot be listed again through this entity.
+        Does NOT flush or commit — caller owns the transaction.
+        """
+        if self.status == PositionStatus.CLOSED:
+            raise PositionAlreadyClosedError(
+                f"Cannot list CLOSED position {self.id!r} on market"
+            )
+        self.market_id = market_id
+        self.is_on_market = 1
+
+    def delist_from_market(self) -> None:
+        """
+        Mark this position as returned from Steam Market back to inventory.
+
+        Clears is_on_market but preserves market_id for history.
+        Does NOT flush or commit — caller owns the transaction.
+        """
+        self.is_on_market = 0
 
 
 class SystemSettings(Base):

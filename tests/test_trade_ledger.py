@@ -224,7 +224,8 @@ class TestPositionRepository:
 
     def test_multiple_open_positions_all_returned(self, repo, db):
         for i in range(4):
-            repo.add_position(asset_id=i, market_hash_name=f"Item{i}", buy_price=float(i * 1000))
+            # buy_price uses (i + 1) so it is always positive (domain invariant)
+            repo.add_position(asset_id=i, market_hash_name=f"Item{i}", buy_price=float((i + 1) * 1000))
         db.commit()
 
         positions = repo.get_open_positions()

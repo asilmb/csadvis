@@ -3,34 +3,49 @@ SQLAlchemy implementations of domain repository interfaces.
 
 All queries are executed against the Session passed at construction time.
 Callers own the Session lifecycle (open / commit / close).
+
+Concrete classes inherit from the ABCs defined in abstract_repo.py:
+  SqlAlchemyPositionRepository  → PositionRepository
+  SqlAlchemyPriceRepository     → PriceRepository
+  SqlAlchemyTaskQueueRepository → TaskQueueRepository
+  SqlAlchemyInventoryRepository → InventoryRepository  (repositories.py)
+
+DTOs are defined in abstract_repo.py and re-exported here for backward
+compatibility — callers that already import from sql_repositories continue
+to work without changes.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
+from src.domain.abstract_repo import (
+    PositionDTO,
+    PositionRepository,
+    PriceRepository,
+    PriceSnapshotDTO,
+    TaskDTO,
+    TaskQueueRepository,
+)
 from src.domain.repositories import InventoryRepository
 from src.domain.value_objects import Amount
 
-# ─── Task Queue DTO ───────────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class TaskDTO:
-    """Immutable task snapshot — safe to pass across layer boundaries."""
-
-    id: str
-    type: str
-    priority: int
-    status: str
-    payload: dict | None
-    retries: int
-    deadline_at: datetime | None
-    created_at: datetime
+# Re-export DTOs so that existing `from src.domain.sql_repositories import XxxDTO`
+# imports continue to resolve without modification.
+__all__ = [
+    "PositionDTO",
+    "PriceSnapshotDTO",
+    "TaskDTO",
+    "SqlAlchemyInventoryRepository",
+    "SqlAlchemyPositionRepository",
+    "SqlAlchemyPriceRepository",
+    "SqlAlchemyTaskQueueRepository",
+    "get_cookie_status",
+    "set_cookie_status",
+]
 
 
 class SqlAlchemyInventoryRepository(InventoryRepository):
@@ -235,24 +250,7 @@ class SqlAlchemyInventoryRepository(InventoryRepository):
 # ─── Position Repository ─────────────────────────────────────────────────────
 
 
-@dataclass(frozen=True)
-class PositionDTO:
-    """Immutable Position snapshot — safe to pass across layer boundaries."""
-
-    id: str
-    asset_id: int
-    market_hash_name: str
-    buy_price: float       # price paid per unit
-    quantity: int
-    status: str            # "OPEN" | "CLOSED"
-    opened_at: datetime
-    closed_at: datetime | None
-    classid: str | None = None      # Steam classid — groups same item type (PV-33)
-    market_id: str | None = None    # Steam listing ID when listed on market (PV-33)
-    is_on_market: bool = False      # True when item is currently listed (PV-33)
-
-
-class SqlAlchemyPositionRepository:
+class SqlAlchemyPositionRepository(PositionRepository):
     """
     CRUD repository for the Position ledger (PV-31).
 
@@ -302,10 +300,13 @@ class SqlAlchemyPositionRepository:
     ) -> PositionDTO:
         """
         Insert a new OPEN position.  Does NOT commit — caller owns the transaction.
+
+        Delegates construction to Position.open() so domain invariants
+        (positive buy_price, quantity ≥ 1) are enforced by the entity.
         """
         from src.domain.models import Position
 
-        row = Position(
+        row = Position.open(
             asset_id=asset_id,
             market_hash_name=market_hash_name,
             buy_price=buy_price,
@@ -335,8 +336,8 @@ class SqlAlchemyPositionRepository:
         if row is None:
             return None
 
-        row.status = PositionStatus.CLOSED
-        row.closed_at = datetime.now(UTC).replace(tzinfo=None)
+        # Delegate the state transition to the entity — it owns the invariant.
+        row.close()
         self._db.flush()
         return self._to_dto(row)
 
@@ -354,13 +355,13 @@ class SqlAlchemyPositionRepository:
         row = self._db.query(Position).filter(Position.id == position_id).first()
         if row is None:
             return
-        row.asset_id = new_asset_id
-        if new_classid is not None:
-            row.classid = new_classid
-        if new_market_id is not None:
-            row.market_id = new_market_id
-        if is_on_market is not None:
-            row.is_on_market = int(is_on_market)
+        # Delegate to entity — keeps field-update logic out of the repository.
+        row.update_identity(
+            new_asset_id=new_asset_id,
+            new_classid=new_classid,
+            new_market_id=new_market_id,
+            is_on_market=is_on_market,
+        )
         self._db.flush()
 
     def get_open_by_classid(self, classid: str) -> list[PositionDTO]:
@@ -396,16 +397,7 @@ class SqlAlchemyPositionRepository:
 # ─── Price Repository (JIT valuation) ────────────────────────────────────────
 
 
-@dataclass(frozen=True)
-class PriceSnapshotDTO:
-    """Latest known price for a container — returned by PriceRepository."""
-
-    container_name: str
-    price: float
-    timestamp: datetime
-
-
-class SqlAlchemyPriceRepository:
+class SqlAlchemyPriceRepository(PriceRepository):
     """
     Read / write access to FactContainerPrice keyed by container_name.
 
@@ -542,7 +534,7 @@ class SqlAlchemyPriceRepository:
 # ─── Task Queue Repository ────────────────────────────────────────────────────
 
 
-class SqlAlchemyTaskQueueRepository:
+class SqlAlchemyTaskQueueRepository(TaskQueueRepository):
     """
     CRUD repository for the persistent task queue.
 

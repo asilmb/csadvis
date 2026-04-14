@@ -35,6 +35,23 @@ from src.domain.repositories import InventoryRepository
 
 logger = structlog.get_logger()
 
+# ── Fee / display config (injected at service construction) ───────────────────
+# These values are sourced from config at the application boundary so that
+# the domain DTOs remain free of any infrastructure dependency.
+def _load_fee_config() -> tuple[float, float, str]:
+    """
+    Return (fee_divisor, fee_fixed, currency_symbol) from application config.
+
+    Lazy import keeps the domain module importable even without a .env file
+    (e.g. in unit tests that construct ItemService directly).
+    Falls back to Steam defaults so domain objects are always valid.
+    """
+    try:
+        from config import settings  # noqa: PLC0415 — intentional lazy import
+        return settings.steam_fee_divisor, settings.steam_fee_fixed, settings.currency_symbol
+    except Exception:  # pragma: no cover — only fires when config is missing
+        return 1.15, 5.0, "₸"
+
 # ── Validation thresholds for process_new_price ───────────────────────────────
 _PRICE_MIN: float = 0.01       # KZT — prices at or below this are invalid
 _PRICE_MAX: float = 1_000_000  # KZT — sanity cap; rejects obviously wrong values
@@ -98,11 +115,26 @@ class ItemService:
     production code always passes SqlAlchemyInventoryRepository so this is safe.
     """
 
-    def __init__(self, repo: InventoryRepository) -> None:
+    def __init__(
+        self,
+        repo: InventoryRepository,
+        *,
+        fee_divisor: float | None = None,
+        fee_fixed: float | None = None,
+        currency_symbol: str | None = None,
+    ) -> None:
         self._repo = repo
         # Extract the SQLAlchemy Session from the concrete repo (duck-typed).
         # Falls back to None; affected methods will open their own sessions.
         self._db = getattr(repo, "_db", None)
+
+        # Fee / display config — callers may inject explicit values (e.g. tests);
+        # when omitted the values are sourced from application config so that
+        # domain DTOs are constructed with the current .env overrides.
+        _cfg_divisor, _cfg_fixed, _cfg_symbol = _load_fee_config()
+        self._fee_divisor: float = fee_divisor if fee_divisor is not None else _cfg_divisor
+        self._fee_fixed: float = fee_fixed if fee_fixed is not None else _cfg_fixed
+        self._currency_symbol: str = currency_symbol if currency_symbol is not None else _cfg_symbol
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -203,6 +235,9 @@ class ItemService:
                     lowest_price=(
                         float(item["lowest_price"]) if item.get("lowest_price") else None
                     ),
+                    fee_divisor=self._fee_divisor,
+                    fee_fixed=self._fee_fixed,
+                    currency_symbol=self._currency_symbol,
                 )
             )
 
@@ -270,6 +305,9 @@ class ItemService:
                 lowest_price=(
                     float(latest.lowest_price) if latest.lowest_price else None
                 ),
+                fee_divisor=self._fee_divisor,
+                fee_fixed=self._fee_fixed,
+                currency_symbol=self._currency_symbol,
             )
 
         except Exception as exc:

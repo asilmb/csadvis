@@ -8,13 +8,30 @@ without leaking SQLAlchemy ORM objects.
 DTOs defined here:
   ItemDTO         — current market snapshot for one container (main table row).
   PriceHistoryDTO — one price observation (sparkline / detail chart data point).
+
+Design: pure domain objects — no imports from config, infrastructure, or global state.
+
+Fee and currency parameters are injected by the **caller** (ItemService or an
+equivalent application-layer factory) via constructor keyword arguments:
+
+    ItemDTO(
+        ...,
+        fee_divisor=settings.steam_fee_divisor,   # ← application layer injects
+        fee_fixed=settings.steam_fee_fixed,
+        currency_symbol=settings.currency_symbol,
+    )
+
+Default values on the fields are Steam-standard constants and serve as a last-resort
+fallback so that domain objects remain constructable in unit tests that do not need
+fee precision.  These fields are excluded from JSON serialisation; only the computed
+values (formatted_price, net_proceeds) appear in API responses.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, computed_field
+from pydantic import BaseModel, Field, computed_field
 
 
 class ItemDTO(BaseModel):
@@ -30,10 +47,16 @@ class ItemDTO(BaseModel):
     is_suspicious   : True when price deviates >20 % above its 30-day mean
     volatility      : coefficient of variation (std / mean × 100) of 30-day prices
 
+    Injected config (excluded from serialisation)
+    ---------------------------------------------
+    fee_divisor     : Steam fee divisor (default 1.15)
+    fee_fixed       : Steam fixed fee per transaction (default 5.0)
+    currency_symbol : symbol shown in formatted_price (default "₸")
+
     Computed fields (derived, no extra storage)
     ---------------
-    formatted_price : "1 234 ₸"  — uses settings.currency_symbol
-    net_proceeds    : price after Steam Market 15 % fee + fixed fee
+    formatted_price : "1 234 ₸"
+    net_proceeds    : price after Steam Market fee
     """
 
     model_config = {"frozen": True}
@@ -49,12 +72,17 @@ class ItemDTO(BaseModel):
     mean_price: float | None = None
     lowest_price: float | None = None
 
+    # Fee/display config — injected by the factory/service layer.
+    # excluded=True keeps them out of JSON responses.
+    fee_divisor: float = Field(default=1.15, exclude=True)
+    fee_fixed: float = Field(default=5.0, exclude=True)
+    currency_symbol: str = Field(default="₸", exclude=True)
+
     @computed_field  # type: ignore[misc]
     @property
     def formatted_price(self) -> str:
-        """Human-readable price with currency symbol from settings."""
-        from config import settings
-        return f"{self.current_price:,.0f}\u202f{settings.currency_symbol}"
+        """Human-readable price with currency symbol."""
+        return f"{self.current_price:,.0f}\u202f{self.currency_symbol}"
 
     @computed_field  # type: ignore[misc]
     @property
@@ -62,14 +90,10 @@ class ItemDTO(BaseModel):
         """
         Net amount received after Steam Market fee.
 
-        Formula: current_price / steam_fee_divisor − steam_fee_fixed
+        Formula: current_price / fee_divisor − fee_fixed
         Example: 1 000 ₸ → 1 000 / 1.15 − 5 = 864.96 ₸
         """
-        from config import settings
-        return round(
-            self.current_price / settings.steam_fee_divisor - settings.steam_fee_fixed,
-            2,
-        )
+        return round(self.current_price / self.fee_divisor - self.fee_fixed, 2)
 
     def roi(self, buy_price: float) -> float:
         """
@@ -108,6 +132,10 @@ class PriceHistoryDTO(BaseModel):
     mean_price : 30-day rolling mean price (optional)
     volume_7d  : 7-day traded volume
     source     : data origin tag (default "steam_market")
+
+    Injected config (excluded from serialisation)
+    ---------------------------------------------
+    currency_symbol : symbol shown in formatted_price (default "₸")
     """
 
     model_config = {"frozen": True}
@@ -118,11 +146,13 @@ class PriceHistoryDTO(BaseModel):
     volume_7d: int = 0
     source: str = "steam_market"
 
+    # Display config — injected by factory, excluded from JSON responses.
+    currency_symbol: str = Field(default="₸", exclude=True)
+
     @computed_field  # type: ignore[misc]
     @property
     def formatted_price(self) -> str:
-        from config import settings
-        return f"{self.price:,.0f}\u202f{settings.currency_symbol}"
+        return f"{self.price:,.0f}\u202f{self.currency_symbol}"
 
     @computed_field  # type: ignore[misc]
     @property

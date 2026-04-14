@@ -20,8 +20,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-# Re-export TaskDTO so callers import from a single place.
-from src.domain.sql_repositories import SqlAlchemyTaskQueueRepository, TaskDTO
+# Import TaskDTO from the abstraction layer — not from the concrete implementation.
+from src.domain.abstract_repo import TaskDTO, TaskQueueRepository
+from src.domain.sql_repositories import SqlAlchemyTaskQueueRepository
 
 
 @dataclass

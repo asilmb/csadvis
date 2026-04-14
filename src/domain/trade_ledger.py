@@ -27,7 +27,8 @@ Usage:
 
 from __future__ import annotations
 
-from src.domain.sql_repositories import PositionDTO, SqlAlchemyPositionRepository
+from src.domain.abstract_repo import PositionDTO, PositionRepository
+from src.domain.sql_repositories import SqlAlchemyPositionRepository
 
 __all__ = ["STEAM_NET_MULTIPLIER", "PositionDTO", "TradeService"]
 
