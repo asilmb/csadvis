@@ -273,7 +273,7 @@ class TestGetPortfolioSummary:
             db.commit()
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr("domain.connection.SessionLocal", _CM, raising=False)
+            mp.setattr("src.domain.connection.SessionLocal", _CM, raising=False)
             svc = TradeService()
             return svc.get_portfolio_summary(price_map=price_map)
 

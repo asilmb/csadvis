@@ -117,7 +117,7 @@ class TestCleanupTaskQueue:
         from infra.maintenance import MaintenanceService
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr("domain.connection.SessionLocal", _make_cm(engine), raising=False)
+            mp.setattr("src.domain.connection.SessionLocal", _make_cm(engine), raising=False)
             return MaintenanceService().cleanup_task_queue(**kwargs)
 
     def test_deletes_completed_old_tasks(self, engine, db):
@@ -187,7 +187,7 @@ class TestCleanupEventLog:
         from infra.maintenance import MaintenanceService
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr("domain.connection.SessionLocal", _make_cm(engine), raising=False)
+            mp.setattr("src.domain.connection.SessionLocal", _make_cm(engine), raising=False)
             return MaintenanceService().cleanup_event_log(**kwargs)
 
     def test_deletes_old_info_rows(self, engine, db):
@@ -295,7 +295,7 @@ class TestVacuum:
 
         mock_conn = self._mock_conn()
 
-        with patch("domain.connection.engine") as mock_engine:
+        with patch("src.domain.connection.engine") as mock_engine:
             mock_engine.connect.return_value = mock_conn
             MaintenanceService().vacuum()
 
@@ -309,7 +309,7 @@ class TestVacuum:
 
         mock_conn = self._mock_conn()
 
-        with patch("domain.connection.engine") as mock_engine:
+        with patch("src.domain.connection.engine") as mock_engine:
             mock_engine.connect.return_value = mock_conn
             MaintenanceService().vacuum()
 
@@ -321,8 +321,8 @@ class TestVacuum:
 
         mock_conn = self._mock_conn()
 
-        with patch("domain.connection.engine") as mock_engine, \
-             patch("domain.connection.SessionLocal") as mock_session:
+        with patch("src.domain.connection.engine") as mock_engine, \
+             patch("src.domain.connection.SessionLocal") as mock_session:
             mock_engine.connect.return_value = mock_conn
             MaintenanceService().vacuum()
 

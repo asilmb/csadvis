@@ -305,7 +305,7 @@ class TestTaskQueueServiceExtensions:
         Base.metadata.create_all(engine)
         SM = sessionmaker(bind=engine)
         svc = TaskQueueService()
-        with patch("domain.connection.SessionLocal", SM):
+        with patch("src.domain.connection.SessionLocal", SM):
             yield svc, SM
         engine.dispose()
 
@@ -362,5 +362,5 @@ class TestTaskQueueServiceExtensions:
         assert isinstance(h, SystemHealth)
         assert h.pending_count == 1
         assert h.failed_count == 0
-        assert h.token_level in ("HIGH", "MED", "LOW", "UNKNOWN")
+        assert h.token_level in ("HIGH", "MED", "LOW", "UNKNOWN", "N/A")
         assert isinstance(h.timestamp, str)

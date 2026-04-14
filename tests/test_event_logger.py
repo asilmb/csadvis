@@ -61,7 +61,7 @@ class TestLogEvent:
         from infra.event_logger import log_event
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr("domain.connection.SessionLocal", _make_cm(engine), raising=False)
+            mp.setattr("src.domain.connection.SessionLocal", _make_cm(engine), raising=False)
             log_event("INFO", "test_module", "something happened")
 
         rows = _rows(engine)
@@ -71,7 +71,7 @@ class TestLogEvent:
         from infra.event_logger import log_event
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr("domain.connection.SessionLocal", _make_cm(engine), raising=False)
+            mp.setattr("src.domain.connection.SessionLocal", _make_cm(engine), raising=False)
             log_event("warning", "test_module", "msg")
 
         rows = _rows(engine)
@@ -82,7 +82,7 @@ class TestLogEvent:
 
         long_msg = "x" * 1500
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr("domain.connection.SessionLocal", _make_cm(engine), raising=False)
+            mp.setattr("src.domain.connection.SessionLocal", _make_cm(engine), raising=False)
             log_event("INFO", "mod", long_msg)
 
         rows = _rows(engine)
@@ -93,7 +93,7 @@ class TestLogEvent:
 
         long_mod = "m" * 200
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr("domain.connection.SessionLocal", _make_cm(engine), raising=False)
+            mp.setattr("src.domain.connection.SessionLocal", _make_cm(engine), raising=False)
             log_event("INFO", long_mod, "msg")
 
         rows = _rows(engine)
@@ -103,7 +103,7 @@ class TestLogEvent:
         from infra.event_logger import log_event
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr("domain.connection.SessionLocal", _make_cm(engine), raising=False)
+            mp.setattr("src.domain.connection.SessionLocal", _make_cm(engine), raising=False)
             log_event("ERROR", "signal_handler", "AUTH ERROR: Recoil Case — HTTP 403")
 
         rows = _rows(engine)
@@ -123,7 +123,7 @@ class TestLogEvent:
                 pass
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr("domain.connection.SessionLocal", _BrokenCM, raising=False)
+            mp.setattr("src.domain.connection.SessionLocal", _BrokenCM, raising=False)
             # Must not raise
             log_event("INFO", "mod", "msg")
 
@@ -131,7 +131,7 @@ class TestLogEvent:
         from infra.event_logger import log_event
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr("domain.connection.SessionLocal", _make_cm(engine), raising=False)
+            mp.setattr("src.domain.connection.SessionLocal", _make_cm(engine), raising=False)
             log_event("INFO", "mod", "first")
             log_event("WARNING", "mod", "second")
             log_event("ERROR", "mod", "third")

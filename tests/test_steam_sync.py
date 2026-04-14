@@ -127,46 +127,46 @@ class TestSyncInventory:
         assert r.error_code == "NO_STEAM_ID"
 
     def test_success_returns_items(self):
-        with patch("frontend.inventory.fetch_inventory", new=MagicMock(return_value=_ITEMS)):
+        with patch("ui.inventory.fetch_inventory", new=MagicMock(return_value=_ITEMS)):
             r = sync_inventory("76561198000000001")
         assert r.ok is True
         assert r.items == _ITEMS
         assert r.count == 2
 
     def test_success_empty_inventory(self):
-        with patch("frontend.inventory.fetch_inventory", new=MagicMock(return_value=[])):
+        with patch("ui.inventory.fetch_inventory", new=MagicMock(return_value=[])):
             r = sync_inventory("76561198000000001")
         assert r.ok is True
         assert r.count == 0
         assert "пуст" in r.message
 
     def test_success_none_inventory_treated_as_empty(self):
-        with patch("frontend.inventory.fetch_inventory", new=MagicMock(return_value=None)):
+        with patch("ui.inventory.fetch_inventory", new=MagicMock(return_value=None)):
             r = sync_inventory("76561198000000001")
         assert r.ok is True
         assert r.items == []
         assert r.count == 0
 
     def test_network_exception_returns_error(self):
-        with patch("frontend.inventory.fetch_inventory", new=MagicMock(side_effect=RuntimeError("timeout"))):
+        with patch("ui.inventory.fetch_inventory", new=MagicMock(side_effect=RuntimeError("timeout"))):
             r = sync_inventory("76561198000000001")
         assert r.ok is False
         assert r.error_code == "NETWORK"
         assert "timeout" in r.message
 
     def test_result_is_inventory_result(self):
-        with patch("frontend.inventory.fetch_inventory", new=MagicMock(return_value=_ITEMS)):
+        with patch("ui.inventory.fetch_inventory", new=MagicMock(return_value=_ITEMS)):
             r = sync_inventory("76561198000000001")
         assert isinstance(r, InventoryResult)
 
     def test_success_message_contains_count(self):
-        with patch("frontend.inventory.fetch_inventory", new=MagicMock(return_value=_ITEMS)):
+        with patch("ui.inventory.fetch_inventory", new=MagicMock(return_value=_ITEMS)):
             r = sync_inventory("76561198000000001")
         assert "2" in r.message
 
     def test_steam_id_is_stripped_before_use(self):
         mock_fetch = MagicMock(return_value=_ITEMS)
-        with patch("frontend.inventory.fetch_inventory", new=mock_fetch):
+        with patch("ui.inventory.fetch_inventory", new=mock_fetch):
             sync_inventory("  76561198000000001  ")
         # should not raise — strip happens before call
 

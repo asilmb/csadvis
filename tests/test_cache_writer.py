@@ -316,7 +316,7 @@ def test_get_cached_portfolio_advice_returns_none_on_empty():
     mock_query.order_by.return_value = mock_query
     mock_query.first.return_value = None
 
-    with patch("domain.portfolio.SessionLocal", return_value=mock_db_instance):
+    with patch("src.domain.portfolio.SessionLocal", return_value=mock_db_instance):
         result = get_cached_portfolio_advice()
 
     assert result is None
@@ -348,7 +348,7 @@ def test_get_cached_portfolio_advice_deserialises_json():
     mock_query.order_by.return_value = mock_query
     mock_query.first.return_value = fake_row
 
-    with patch("domain.portfolio.SessionLocal", return_value=mock_db_instance):
+    with patch("src.domain.portfolio.SessionLocal", return_value=mock_db_instance):
         result = get_cached_portfolio_advice()
 
     assert result is not None
@@ -366,7 +366,7 @@ def test_get_cached_signals_returns_empty_on_no_data():
     mock_db_instance.query.return_value = mock_query
     mock_query.scalar.return_value = None
 
-    with patch("domain.portfolio.SessionLocal", return_value=mock_db_instance):
+    with patch("src.domain.portfolio.SessionLocal", return_value=mock_db_instance):
         result = get_cached_signals()
 
     assert result == {}
@@ -412,7 +412,7 @@ def test_get_cached_signals_returns_latest_batch():
     mock_query_rows.filter.return_value = mock_query_rows
     mock_query_rows.all.return_value = rows
 
-    with patch("domain.portfolio.SessionLocal", return_value=mock_db_instance):
+    with patch("src.domain.portfolio.SessionLocal", return_value=mock_db_instance):
         result = get_cached_signals()
 
     assert len(result) == 2

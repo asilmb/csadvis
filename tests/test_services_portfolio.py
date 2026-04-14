@@ -61,7 +61,7 @@ class TestGetPortfolioData:
         return db
 
     def test_returns_empty_when_no_containers(self) -> None:
-        with patch("domain.portfolio.SessionLocal") as mock_sl:
+        with patch("src.domain.portfolio.SessionLocal") as mock_sl:
             db = MagicMock()
             mock_sl.return_value = db
             # containers query returns []
@@ -77,7 +77,7 @@ class TestGetPortfolioData:
 
     def test_db_always_closed_on_exception(self) -> None:
         """Session must be closed even if an exception is raised mid-query."""
-        with patch("domain.portfolio.SessionLocal") as mock_sl:
+        with patch("src.domain.portfolio.SessionLocal") as mock_sl:
             db = MagicMock()
             mock_sl.return_value = db
             db.query.side_effect = RuntimeError("DB error")
@@ -90,7 +90,7 @@ class TestGetPortfolioData:
         c1 = _make_fake_container("id-1", "Revolution Case", 3.49, "Weapon Case")
         price_row = _make_fake_price_row("id-1", price=576.0, volume_7d=50)
 
-        with patch("domain.portfolio.SessionLocal") as mock_sl:
+        with patch("src.domain.portfolio.SessionLocal") as mock_sl:
             db = MagicMock()
             mock_sl.return_value = db
 
@@ -133,7 +133,7 @@ class TestGetPortfolioData:
 
 class TestGetContainerDetail:
     def test_returns_none_for_unknown_id(self) -> None:
-        with patch("domain.portfolio.SessionLocal") as mock_sl:
+        with patch("src.domain.portfolio.SessionLocal") as mock_sl:
             db = MagicMock()
             mock_sl.return_value = db
             db.query.return_value.filter.return_value.first.return_value = None
@@ -142,7 +142,7 @@ class TestGetContainerDetail:
             db.close.assert_called_once()
 
     def test_db_closed_on_missing_container(self) -> None:
-        with patch("domain.portfolio.SessionLocal") as mock_sl:
+        with patch("src.domain.portfolio.SessionLocal") as mock_sl:
             db = MagicMock()
             mock_sl.return_value = db
             db.query.return_value.filter.return_value.first.return_value = None
@@ -150,7 +150,7 @@ class TestGetContainerDetail:
             db.close.assert_called_once()
 
     def test_db_closed_on_exception(self) -> None:
-        with patch("domain.portfolio.SessionLocal") as mock_sl:
+        with patch("src.domain.portfolio.SessionLocal") as mock_sl:
             db = MagicMock()
             mock_sl.return_value = db
             db.query.side_effect = RuntimeError("DB error")
@@ -162,7 +162,7 @@ class TestGetContainerDetail:
         c = _make_fake_container("id-1", "Revolution Case", 3.49, "Weapon Case")
         price = _make_fake_price_row("id-1", price=720.0, volume_7d=30, lowest_price=672.0)
 
-        with patch("domain.portfolio.SessionLocal") as mock_sl:
+        with patch("src.domain.portfolio.SessionLocal") as mock_sl:
             db = MagicMock()
             mock_sl.return_value = db
 
@@ -208,7 +208,7 @@ class TestGetContainerDetail:
     def test_container_name_is_str(self) -> None:
         c = _make_fake_container("id-1", "Test Case", 3.49, "Weapon Case")
 
-        with patch("domain.portfolio.SessionLocal") as mock_sl:
+        with patch("src.domain.portfolio.SessionLocal") as mock_sl:
             db = MagicMock()
             mock_sl.return_value = db
 
