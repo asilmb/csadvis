@@ -58,17 +58,22 @@ def create_app(lifespan: Any = None) -> FastAPI:
     @app.middleware("http")
     async def log_request_timing(request: Request, call_next):
         t0 = time.monotonic()
-        response = await call_next(request)
-        duration_ms = round((time.monotonic() - t0) * 1000)
-        logger.info(
-            "http_request",
-            method=request.method,
-            path=request.url.path,
-            status_code=response.status_code,
-            duration_ms=duration_ms,
-        )
-        response.headers["X-Response-Time-Ms"] = str(duration_ms)
-        return response
+        response = None
+        try:
+            response = await call_next(request)
+            return response
+        finally:
+            duration_ms = round((time.monotonic() - t0) * 1000)
+            status_code = response.status_code if response is not None else 500
+            logger.info(
+                "http_request",
+                method=request.method,
+                path=request.url.path,
+                status_code=status_code,
+                duration_ms=duration_ms,
+            )
+            if response is not None:
+                response.headers["X-Response-Time-Ms"] = str(duration_ms)
 
     # ── Routers ───────────────────────────────────────────────────────────────
     app.include_router(containers_router, prefix="/api/v1")
