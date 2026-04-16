@@ -20,7 +20,7 @@ Signal window:
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +183,7 @@ def get_event_signals(
         "SELL" — post-event window, sell if elevated
         None   — no active signal
     """
-    today = today or date.today()
+    today = today or datetime.now(UTC).date()
     result: dict[str, dict] = {}
 
     for name in container_names:
@@ -236,7 +236,7 @@ def get_event_signals(
 
 def is_calendar_stale(stale_days: int = 180, today: date | None = None) -> bool:
     """Return True if all events ended more than stale_days ago (calendar needs updating)."""
-    today = today or date.today()
+    today = today or datetime.now(UTC).date()
     if not EVENTS:
         return True
     most_recent_end = max(ev["end"] for ev in EVENTS)
@@ -245,7 +245,7 @@ def is_calendar_stale(stale_days: int = 180, today: date | None = None) -> bool:
 
 def get_upcoming_events(today: date | None = None, lookahead_days: int = 60) -> list[dict]:
     """Return events starting within the next N days, sorted by start date."""
-    today = today or date.today()
+    today = today or datetime.now(UTC).date()
     upcoming = []
     for ev in EVENTS:
         days_to = (ev["start"] - today).days
@@ -315,7 +315,7 @@ def get_event_impact(
     if not price_history or not container_name:
         return []
 
-    today = date.today()
+    today = datetime.now(UTC).date()
     results: list[dict] = []
 
     for ev in EVENTS:
