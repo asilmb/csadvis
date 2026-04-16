@@ -17,6 +17,7 @@ Unmatched inventory items (no open position exists) and unmatched positions
 from __future__ import annotations
 
 import logging
+from collections import deque
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -121,7 +122,7 @@ class PositionReconciler:
 
         # ── Step 3: FIFO match (classid) ──────────────────────────────────────
         # Group unmatched inventory items by classid.
-        inv_by_classid: dict[str, list[dict]] = {}
+        inv_by_classid: dict[str, deque[dict]] = {}
         for it in inventory_items:
             aid = int(it["asset_id"])
             if aid in consumed_asset_ids:
@@ -129,7 +130,7 @@ class PositionReconciler:
             cid = str(it.get("classid") or "")
             if not cid:
                 continue
-            inv_by_classid.setdefault(cid, []).append(it)
+            inv_by_classid.setdefault(cid, deque()).append(it)
 
         for pos in still_unmatched:
             classid = pos.classid
@@ -148,7 +149,7 @@ class PositionReconciler:
             # unmatched position (still_unmatched preserves get_open_positions order
             # reversed — but we operate one-at-a-time so we just pop the first inv item).
             candidates = inv_by_classid[classid]
-            inv_item = candidates.pop(0)
+            inv_item = candidates.popleft()
             if not candidates:
                 del inv_by_classid[classid]
 
