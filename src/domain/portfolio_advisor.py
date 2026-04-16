@@ -33,20 +33,23 @@ from datetime import UTC, datetime, timedelta
 
 from config import settings
 from src.domain.events import SuperDealDetected
+from src.domain.lifecycle import classify_lifecycle, is_flip_eligible, is_invest_eligible
 from src.domain.services import SuperDealDomainService
 from src.domain.specifications import PriceWithinRange, ZScoreBelow
 from src.domain.value_objects import Amount, ROI
-from src.domain.correlation import check_portfolio_correlation, compute_correlation_matrix
+from src.domain.correlation import compute_correlation_matrix
 from src.domain.wall_filter import compute_wall_metrics, get_best_buy_order
+from src.domain.analytics.armory_advisor import DEFAULT_REWARD_CATALOG as _ARMORY_POOL
 
 logger = logging.getLogger(__name__)
 
 _STEAM_FEE_DIV = settings.steam_fee_divisor  # 1.15 — overridable via .env
 _STEAM_MIN_FEE = settings.steam_fee_fixed  # ~5₸ — overridable via .env
-_VOLATILITY_MAX_FLIP = 0.15  # 15 % max for flip
+_VOLATILITY_MIN_FLIP = 0.05  # 5 % min — below this the asset is dead (no movement)
+_VOLATILITY_MAX_FLIP = 0.30  # 30 % max — above this price is too chaotic to predict exit
 _MIN_NET_CAGR = 0.01  # 1 % minimum NET annual return after Steam fee
 _SPREAD_MAX_FLIP = 0.25  # 25 % max bid-ask spread for flip
-_LIQUIDITY_MIN = 3  # minimum avg daily volume for flip
+_LIQUIDITY_MIN_DAILY = 1000  # minimum avg daily volume for flip (absolute floor)
 
 # ─── Super Deal constants (PV-15) ─────────────────────────────────────────────
 _SUPER_DEAL_RATIO = 0.70  # price < baseline * 0.70  (30 % discount trigger)
@@ -57,6 +60,14 @@ _MIN_HISTORY_DAYS = 90  # minimum price history to qualify (mature asset guard)
 _VOL_SPIKE_THRESHOLD = 2.0  # max avg_vol_7d / avg_vol_30d ratio (supply shock guard)
 _MIN_SUPER_DEAL_MARGIN = 0.20  # minimum expected net margin after Steam fee (20 %)
 _MAX_DAYS_AT_LOW = 7  # max consecutive days at low before treating as new baseline
+
+
+def _parse_ts(h: dict) -> datetime:
+    """Parse the 'timestamp' string from a price history dict into a datetime."""
+    ts: str = h.get("timestamp", "")
+    if len(ts) == 16:
+        return datetime.strptime(ts, "%Y-%m-%d %H:%M")
+    return datetime.fromisoformat(ts[:19])
 
 
 def _net(sell_price: float) -> float:
@@ -75,23 +86,23 @@ def _volatility(prices: list[float]) -> float | None:
 
 
 def _prices_in_window(history: list[dict], days: int) -> list[float]:
-    """Extract price values from history that fall within the last N days."""
+    """Extract price values from history that fall within the last N days.
+
+    Returns prices sorted chronologically (oldest → newest) so that
+    callers can rely on out[-1] being the most recent price.
+    """
     cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=days)
-    out: list[float] = []
+    out: list[tuple[datetime, float]] = []
     for h in history:
         try:
-            ts = h.get("timestamp", "")
-            dt = (
-                datetime.strptime(ts, "%Y-%m-%d %H:%M")
-                if len(ts) == 16
-                else datetime.fromisoformat(ts[:19])
-            )
+            dt = _parse_ts(h)
             if dt >= cutoff and h.get("price"):
-                out.append(float(h["price"]))
+                out.append((dt, float(h["price"])))
         except (ValueError, TypeError, KeyError):
             logger.debug("_prices_in_window: skipping malformed row %r", h)
             continue
-    return out
+    out.sort(key=lambda x: x[0])
+    return [p for _, p in out]
 
 
 def _compute_cagr(history: list[dict]) -> float | None:
@@ -102,12 +113,7 @@ def _compute_cagr(history: list[dict]) -> float | None:
     valid = []
     for h in history:
         try:
-            ts = h.get("timestamp", "")
-            dt = (
-                datetime.strptime(ts, "%Y-%m-%d %H:%M")
-                if len(ts) == 16
-                else datetime.fromisoformat(ts[:19])
-            )
+            dt = _parse_ts(h)
             if h.get("price") and h["price"] > 0:
                 valid.append((dt, float(h["price"])))
         except (ValueError, TypeError, KeyError):
@@ -147,12 +153,7 @@ def _compute_cagr_metrics(history: list[dict]) -> tuple[float, float, float]:
     valid: list[tuple[datetime, float]] = []
     for h in history:
         try:
-            ts = h.get("timestamp", "")
-            dt = (
-                datetime.strptime(ts, "%Y-%m-%d %H:%M")
-                if len(ts) == 16
-                else datetime.fromisoformat(ts[:19])
-            )
+            dt = _parse_ts(h)
             if h.get("price") and h["price"] > 0:
                 valid.append((dt, float(h["price"])))
         except (ValueError, TypeError, KeyError):
@@ -192,12 +193,7 @@ def _volumes_in_window(history: list[dict], days: int) -> list[float]:
     out: list[float] = []
     for h in history:
         try:
-            ts = h.get("timestamp", "")
-            dt = (
-                datetime.strptime(ts, "%Y-%m-%d %H:%M")
-                if len(ts) == 16
-                else datetime.fromisoformat(ts[:19])
-            )
+            dt = _parse_ts(h)
             v = h.get("volume_7d")
             if dt >= cutoff and v is not None:
                 out.append(float(v))
@@ -240,12 +236,7 @@ def _pre_crash_mean(history: list[dict], z_onset_threshold: float) -> float | No
     dated: list[tuple[datetime, float]] = []
     for h in history:
         try:
-            ts = h.get("timestamp", "")
-            dt = (
-                datetime.strptime(ts, "%Y-%m-%d %H:%M")
-                if len(ts) == 16
-                else datetime.fromisoformat(ts[:19])
-            )
+            dt = _parse_ts(h)
             if h.get("price") and h["price"] > 0:
                 dated.append((dt, float(h["price"])))
         except (ValueError, TypeError, KeyError):
@@ -293,12 +284,7 @@ def _consecutive_days_below(history: list[dict], threshold_price: float) -> int:
     by_date: dict[str, float] = {}
     for h in history:
         try:
-            ts = h.get("timestamp", "")
-            dt = (
-                datetime.strptime(ts, "%Y-%m-%d %H:%M")
-                if len(ts) == 16
-                else datetime.fromisoformat(ts[:19])
-            )
+            dt = _parse_ts(h)
             if h.get("price") and h["price"] > 0:
                 by_date[dt.strftime("%Y-%m-%d")] = float(h["price"])
         except (ValueError, TypeError, KeyError):
@@ -410,12 +396,7 @@ def _earliest_date(history: list[dict]) -> datetime | None:
     earliest: datetime | None = None
     for h in history:
         try:
-            ts = h.get("timestamp", "")
-            dt = (
-                datetime.strptime(ts, "%Y-%m-%d %H:%M")
-                if len(ts) == 16
-                else datetime.fromisoformat(ts[:19])
-            )
+            dt = _parse_ts(h)
             if earliest is None or dt < earliest:
                 earliest = dt
         except (ValueError, TypeError, KeyError):
@@ -545,6 +526,8 @@ def allocate_portfolio(
     # ── Step 1: FLIP candidates ───────────────────────────────────────────────
     flip_candidates: list[dict] = []
     for c in containers:
+        if str(c.container_name) in _ARMORY_POOL:
+            continue  # managed via Armory Pass — excluded from flip pool
         adv = trade_advice.get(str(c.container_id), {})
         buy_t = adv.get("buy_target", 0)
         sell_t = adv.get("sell_target", 0)
@@ -564,10 +547,27 @@ def allocate_portfolio(
         if current_price_now < buy_t:
             continue  # stale history — current price below historical buy target
         weekly_vol = pd_info.get("quantity", 0) or 0
-        prices_30d = _prices_in_window(price_history.get(str(c.container_id), []), 30)
+        _history_for_lc = price_history.get(str(c.container_id), [])
+        prices_30d = _prices_in_window(_history_for_lc, 30)
         vol_30d = _volatility(prices_30d)
         if vol_30d is None:
             continue  # insufficient price history for flip assessment
+
+        # Lifecycle gate — skip NEW and LEGACY stages for flip
+        _lc_all_prices = [float(h["price"]) for h in _history_for_lc if h.get("price")]
+        _lc_first_date = _earliest_date(_history_for_lc)
+        if _lc_first_date is not None and _lc_all_prices:
+            _lc_vol_30d_avg = float(weekly_vol) / 30 if weekly_vol else 0.0
+            _lc_stage = classify_lifecycle(
+                first_seen_date=_lc_first_date.date(),
+                current_date=datetime.now(UTC).replace(tzinfo=None).date(),
+                prices_30d=prices_30d,
+                vol_7d=float(weekly_vol) / 7 if weekly_vol else 0.0,
+                vol_30d_avg=_lc_vol_30d_avg,
+                all_time_prices=_lc_all_prices,
+            )
+            if not is_flip_eligible(_lc_stage):
+                continue  # NEW (speculative), LEGACY (invest-only), or DEAD
 
         # Float: avg daily volume (proxy for liquidity)
         avg_daily_vol = weekly_vol / 7 if weekly_vol else 0.0
@@ -579,8 +579,10 @@ def allocate_portfolio(
         if lowest_p and median_p > 0 and lowest_p < median_p:
             spread_pct = (median_p - lowest_p) / median_p
 
-        if vol_30d >= _VOLATILITY_MAX_FLIP:
-            continue  # too volatile
+        if vol_30d < _VOLATILITY_MIN_FLIP or vol_30d > _VOLATILITY_MAX_FLIP:
+            continue  # outside flip range: dead asset (<5%) or too chaotic (>30%)
+        if avg_daily_vol < _LIQUIDITY_MIN_DAILY:
+            continue  # absolute liquidity floor — less than 1000 sales/day → skip
         if avg_daily_vol * 7 < planned_qty * 2:
             continue  # market cannot absorb position in 7 days with 2x safety factor
         if spread_pct > _SPREAD_MAX_FLIP:
@@ -597,6 +599,7 @@ def allocate_portfolio(
                 current_price=float(current_price_now),
                 target_price=float(sell_t),
                 avg_daily_vol=avg_daily_vol,
+                vol_30d=vol_30d,
             )
             _best_buy_order = get_best_buy_order(_ob.get("buy_order_graph", []))
             if not _wall_metrics.get("passes_wall_filter", True):
@@ -660,7 +663,28 @@ def allocate_portfolio(
     # ── Step 2: INVEST candidates (Net CAGR) ─────────────────────────────────
     invest_candidates: list[dict] = []
     for c in containers:
+        if str(c.container_name) in _ARMORY_POOL:
+            continue  # managed via Armory Pass — excluded from invest pool
         history = price_history.get(str(c.container_id), [])
+
+        # Lifecycle gate — only AGING and LEGACY for invest
+        _lc_all_prices_inv = [float(h["price"]) for h in history if h.get("price")]
+        _lc_first_date_inv = _earliest_date(history)
+        if _lc_first_date_inv is not None and _lc_all_prices_inv:
+            _lc_prices_30d_inv = _prices_in_window(history, 30)
+            _lc_pd_info_inv = price_data.get(str(c.container_name), {})
+            _lc_weekly_vol_inv = float(_lc_pd_info_inv.get("quantity") or 0)
+            _lc_stage_inv = classify_lifecycle(
+                first_seen_date=_lc_first_date_inv.date(),
+                current_date=datetime.now(UTC).replace(tzinfo=None).date(),
+                prices_30d=_lc_prices_30d_inv,
+                vol_7d=_lc_weekly_vol_inv / 7 if _lc_weekly_vol_inv else 0.0,
+                vol_30d_avg=_lc_weekly_vol_inv / 30 if _lc_weekly_vol_inv else 0.0,
+                all_time_prices=_lc_all_prices_inv,
+            )
+            if not is_invest_eligible(_lc_stage_inv):
+                continue  # NEW (too young), ACTIVE (flip candidate), or DEAD
+
         gross_cagr, net_cagr, years = _compute_cagr_metrics(history)
 
         # Require ≥ 1 year of history and positive net annual return after Steam fee
@@ -714,7 +738,8 @@ def allocate_portfolio(
         cid = str(c.container_id)
         sd_history = price_history.get(cid, [])
         sd_pd_info = price_data.get(str(c.container_name), {})
-        sd_baseline = float(invest_signals.get(cid, {}).get("baseline_price") or 0)
+        sd_prices_30d = _prices_in_window(sd_history, 30)
+        sd_baseline = statistics.mean(sd_prices_30d) if sd_prices_30d else 0.0
         _, sd_net_cagr, _ = _compute_cagr_metrics(sd_history)
 
         candidate = _detect_super_deal(
@@ -743,15 +768,6 @@ def allocate_portfolio(
             super_deal_budget,
         )
 
-    # ── Correlation check (M-06) ──────────────────────────────────────────────
-    id_to_name = {str(c.container_id): str(c.container_name) for c in containers}
-    corr_result = compute_correlation_matrix(price_history, id_to_name)
-    correlation_warning = check_portfolio_correlation(
-        best_flip["name"] if best_flip else None,
-        best_invest["name"] if best_invest else None,
-        corr_result["pairs"],
-    )
-
     return {
         "sell": sell_candidates,
         "flip": best_flip,
@@ -764,6 +780,5 @@ def allocate_portfolio(
         "total_capital": round(total_capital, 0),
         "top_flips": flip_candidates[:5],
         "top_invests": invest_candidates[:5],
-        "correlation_warning": correlation_warning,
         "super_deal": best_super_deal,
     }
