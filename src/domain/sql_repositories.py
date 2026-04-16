@@ -605,6 +605,8 @@ class SqlAlchemyTaskQueueRepository(TaskQueueRepository):
         Uses a single UPDATE … WHERE id = (SELECT … LIMIT 1) RETURNING * so
         that concurrent workers can never pick the same row twice (no TOCTOU).
         """
+        import json
+
         import sqlalchemy
 
         result = self._db.execute(
@@ -627,19 +629,18 @@ class SqlAlchemyTaskQueueRepository(TaskQueueRepository):
         row = result.fetchone()
         if row is None:
             return None
-        import json
-
-        raw_payload = row[4]
+        m = row._mapping
+        raw_payload = m["payload"]
         payload = json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload
         return TaskDTO(
-            id=str(row[0]),
-            type=str(row[1]),
-            priority=int(row[2]),
-            status=str(row[3]),
+            id=str(m["id"]),
+            type=str(m["type"]),
+            priority=int(m["priority"]),
+            status=str(m["status"]),
             payload=payload,
-            retries=int(row[5]),
-            deadline_at=row[6],
-            created_at=row[7],
+            retries=int(m["retries"]),
+            deadline_at=m["deadline_at"],
+            created_at=m["created_at"],
         )
 
     def complete(self, task_id: str) -> None:
