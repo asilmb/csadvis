@@ -508,8 +508,8 @@ def allocate_portfolio(
         sell_t = adv.get("sell_target", 0)
         if not sell_t:
             continue
-        net_each = round(_net(sell_t), 0)
-        net_total = round(net_each * qty, 0)
+        net_each = round(_net(sell_t))
+        net_total = round(net_each * qty)
         sell_candidates.append(
             {
                 "name": name,
@@ -640,14 +640,14 @@ def allocate_portfolio(
                 "qty": actual_qty,
                 "buy_price": int(buy_t),
                 "sell_price": int(sell_t),
-                "net_per_unit": round(net_unit, 0),
-                "expected_net_total": round(net_unit * actual_qty, 0),
+                "net_per_unit": round(net_unit),
+                "expected_net_total": round(net_unit * actual_qty),
                 "flip_score": round(flip_score, 4),
                 "weekly_volume": weekly_vol,
                 "avg_daily_vol": round(avg_daily_vol, 1),
                 "volatility_pct": round(vol_30d * 100, 1),
                 "spread_pct": round(spread_pct * 100, 1),
-                "budget_used": round(budget_used, 0),
+                "budget_used": round(budget_used),
                 "net_margin_pct": adv.get("net_margin_pct", 0),
                 "effective_hold_days": round(effective_hold_days, 1),
                 # WALL-1 order book metrics (0/0.0 when order_book_data not provided)
@@ -722,7 +722,7 @@ def allocate_portfolio(
                 "cagr_net_pct": round(net_cagr * 100, 1),
                 "volatility_pct": round(vol_180d * 100, 1),
                 "invest_score": round(invest_score, 4),
-                "budget_used": round(planned_qty * buy_t, 0),
+                "budget_used": round(planned_qty * buy_t),
                 "history_years": history_years,
             }
         )
@@ -758,7 +758,7 @@ def allocate_portfolio(
     super_deal_budget: float = 0.0
     if super_deal_candidates:
         best_super_deal = min(super_deal_candidates, key=lambda x: x["z_score"])
-        super_deal_budget = round(reserve_amount * 0.50, 0)
+        super_deal_budget = round(reserve_amount * 0.50)
         best_super_deal["budget"] = super_deal_budget
         logger.info(
             "PV-15 Super Deal detected: %s  Z=%.2f  margin=%.1f%%  budget=%.0f",
@@ -772,12 +772,12 @@ def allocate_portfolio(
         "sell": sell_candidates,
         "flip": best_flip,
         "invest": best_invest,
-        "reserve_amount": round(reserve_amount, 0),
-        "flip_budget": round(flip_budget, 0),
-        "invest_budget": round(invest_budget, 0),
-        "total_balance": round(balance, 0),
-        "inventory_value": round(inventory_value, 0),
-        "total_capital": round(total_capital, 0),
+        "reserve_amount": round(reserve_amount),
+        "flip_budget": round(flip_budget),
+        "invest_budget": round(invest_budget),
+        "total_balance": round(balance),
+        "inventory_value": round(inventory_value),
+        "total_capital": round(total_capital),
         "top_flips": flip_candidates[:5],
         "top_invests": invest_candidates[:5],
         "super_deal": best_super_deal,

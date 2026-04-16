@@ -79,18 +79,17 @@ def compute_trade_advice(
     prices_90d.sort()
     data_source = "90d_steam"
 
-    if len(prices_90d) >= 5:
+    if len(prices_90d) >= 20:
         buy_target = _percentile(prices_90d, 20)
         sell_target = _percentile(prices_90d, 70)
-        # FLIP-R4: cap sell target so it never exceeds current price × flip_sell_target_cap.
-        # Prevents chasing stale historical highs the current market cannot support.
-        # prices_90d is sorted ascending; last element is the most recent price datapoint.
-        current_price_proxy = prices_90d[-1]
-        sell_target = min(sell_target, current_price_proxy * settings.flip_sell_target_cap)
+        # FLIP-R4: cap sell target relative to buy_target (entry price proxy).
+        # Ensures sell target never drifts far above the actual entry point —
+        # a 4-5% net gain after Steam fee is the goal, not chasing historical highs.
+        sell_target = min(sell_target, buy_target * settings.flip_sell_target_cap)
     else:
         # Fallback: use baseline with margins
-        buy_target = round(baseline * 0.85, 0)
-        sell_target = round(baseline * 1.20, 0)
+        buy_target = round(baseline * 0.85)
+        sell_target = round(baseline * 1.20)
         data_source = "baseline_fallback"
 
     # ── Net margin after Steam's 15% fee ──────────────────────────────────────
@@ -113,5 +112,5 @@ def compute_trade_advice(
         "net_margin_pct": round(net_margin_pct, 1),
         "hold_detail": hold_detail,
         "data_source": data_source,
-        "baseline": round(baseline, 0),
+        "baseline": round(baseline),
     }
