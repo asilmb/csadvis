@@ -104,7 +104,6 @@ def write_new_containers(db: Session, containers: list[ScrapedContainer]) -> int
                     base_cost=cost,
                 )
             )
-            db.flush()
             db.commit()
             existing.add(sc.name)
             inserted += 1

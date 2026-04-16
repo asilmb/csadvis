@@ -117,7 +117,6 @@ class PostgresRepository(AbstractRepository):
         container.error_count = (container.error_count or 0) + 1
         if container.error_count >= 3:
             container.is_blacklisted = 1
-        self._db.flush()
 
     def get_prices_since(self, cutoff: datetime) -> List[tuple]:
         from src.domain.models import FactContainerPrice
@@ -252,5 +251,4 @@ class PostgresRepository(AbstractRepository):
         deleted_result = self._db.execute(del_stmt, {"cutoff": cutoff})
         rows_deleted = deleted_result.rowcount
 
-        self._db.flush()
         return rows_deleted, len(new_rows)

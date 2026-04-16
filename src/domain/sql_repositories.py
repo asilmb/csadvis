@@ -313,7 +313,6 @@ class SqlAlchemyPositionRepository(PositionRepository):
             quantity=quantity,
         )
         self._db.add(row)
-        self._db.flush()
         return self._to_dto(row)
 
     def close_position(self, asset_id: int) -> PositionDTO | None:
@@ -338,7 +337,6 @@ class SqlAlchemyPositionRepository(PositionRepository):
 
         # Delegate the state transition to the entity — it owns the invariant.
         row.close()
-        self._db.flush()
         return self._to_dto(row)
 
     def update_asset_identity(
@@ -362,7 +360,6 @@ class SqlAlchemyPositionRepository(PositionRepository):
             new_market_id=new_market_id,
             is_on_market=is_on_market,
         )
-        self._db.flush()
 
     def get_open_by_classid(self, classid: str) -> list[PositionDTO]:
         """Return OPEN positions matching classid, ordered by opened_at ASC (FIFO), then id ASC."""
@@ -491,7 +488,6 @@ class SqlAlchemyPriceRepository(PriceRepository):
             source=source,
         )
         self._db.add(row)
-        self._db.flush()
         return True
 
     def get_price_history(self, container_name: str) -> list[dict]:
@@ -596,12 +592,10 @@ class SqlAlchemyTaskQueueRepository(TaskQueueRepository):
                 if row.status == TaskStatus.PENDING and row.priority > priority:
                     row.priority = priority
                     row.updated_at = datetime.now(UTC).replace(tzinfo=None)
-                    self._db.flush()
                 return None  # deduplicated — no new row
 
         row = TaskQueue(type=task_type, priority=priority, payload=payload)
         self._db.add(row)
-        self._db.flush()
         return self._to_dto(row)
 
     def pick_task(self) -> TaskDTO | None:
@@ -658,7 +652,6 @@ class SqlAlchemyTaskQueueRepository(TaskQueueRepository):
             row.status = TaskStatus.COMPLETED
             row.completed_at = now
             row.updated_at = now
-            self._db.flush()
 
     def fail(self, task_id: str, max_retries: int = 3, error_msg: str | None = None) -> str:
         """
@@ -676,7 +669,6 @@ class SqlAlchemyTaskQueueRepository(TaskQueueRepository):
         row.updated_at = now
         if error_msg:
             row.error_message = error_msg[:500]  # truncate to column length
-        self._db.flush()
         return str(row.status)
 
     def pause_auth(self, task_id: str) -> None:
@@ -687,7 +679,6 @@ class SqlAlchemyTaskQueueRepository(TaskQueueRepository):
         if row is not None:
             row.status = TaskStatus.PAUSED_AUTH
             row.updated_at = datetime.now(UTC).replace(tzinfo=None)
-            self._db.flush()
 
     def requeue_pending(self, task_id: str) -> None:
         """Reset a task back to PENDING without incrementing the retry counter (network backoff)."""
@@ -697,7 +688,6 @@ class SqlAlchemyTaskQueueRepository(TaskQueueRepository):
         if row is not None:
             row.status = TaskStatus.PENDING
             row.updated_at = datetime.now(UTC).replace(tzinfo=None)
-            self._db.flush()
 
     def create_processing(
         self, task_type: str, payload: dict | None = None, priority: int = 3
@@ -716,7 +706,6 @@ class SqlAlchemyTaskQueueRepository(TaskQueueRepository):
         row = TaskQueue(type=task_type, priority=priority, payload=payload)
         row.status = TaskStatus.PROCESSING
         self._db.add(row)
-        self._db.flush()
         return self._to_dto(row)
 
     def update_task_progress(self, task_id: str, progress: dict) -> None:
@@ -729,7 +718,6 @@ class SqlAlchemyTaskQueueRepository(TaskQueueRepository):
             current.update(progress)
             row.payload = current
             row.updated_at = datetime.now(UTC).replace(tzinfo=None)
-            self._db.flush()
 
     def has_paused_auth_tasks(self) -> bool:
         """Return True if any task is currently in PAUSED_AUTH state."""
