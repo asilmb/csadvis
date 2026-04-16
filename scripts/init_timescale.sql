@@ -36,15 +36,22 @@ CREATE TABLE IF NOT EXISTS fact_container_prices (
     source              TEXT        DEFAULT 'steam_market'
 );
 
-CREATE INDEX IF NOT EXISTS ix_container_price_ts
-    ON fact_container_prices (container_id, "timestamp" DESC);
-
 SELECT create_hypertable(
     'fact_container_prices',
     'timestamp',
     if_not_exists => TRUE,
     migrate_data  => TRUE
 );
+
+-- Regular index for range scans (must come after create_hypertable)
+CREATE INDEX IF NOT EXISTS ix_container_price_ts
+    ON fact_container_prices (container_id, "timestamp" DESC);
+
+-- Unique constraint: one price snapshot per container per timestamp.
+-- Prevents duplicate rows on backfill retry.
+-- Must include the partition column (timestamp) — TimescaleDB requirement.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_container_price
+    ON fact_container_prices (container_id, "timestamp");
 
 -- ─── dim_user_positions ───────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS dim_user_positions (

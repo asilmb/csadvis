@@ -12,6 +12,8 @@ Tables:
   task_queue               — persistent background task queue (PV-25)
   worker_registry          — worker heartbeat / status registry (PV-28)
   positions                — inventory position ledger with asset_id (PV-31)
+  dim_deals                — flip trade lifecycle tracker (entry → unlock → sold/stopped)
+  dim_banned_assets        — dead assets excluded from future scans
 """
 
 import uuid
@@ -29,6 +31,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy import JSON
 from sqlalchemy.orm import DeclarativeBase, relationship
@@ -82,7 +85,10 @@ class FactContainerPrice(Base):
 
     container = relationship("DimContainer", back_populates="price_history")
 
-    __table_args__ = (Index("ix_container_price_ts", "container_id", "timestamp"),)
+    __table_args__ = (
+        Index("ix_container_price_ts", "container_id", "timestamp"),
+        UniqueConstraint("container_id", "timestamp", name="uix_container_price"),
+    )
 
 
 class DimUserPosition(Base):
@@ -195,6 +201,72 @@ class FactInvestmentSignal(Base):
 
     def __repr__(self) -> str:
         return f"<FactInvestmentSignal {self.container_id} {self.verdict} @ {self.computed_at}>"
+
+
+# ─── Deal tracking ────────────────────────────────────────────────────────────
+
+
+class DealStatus(StrEnum):
+    LOCKED = "LOCKED"
+    ACTIVE = "ACTIVE"
+    SOLD = "SOLD"
+    STOPPED = "STOPPED"
+
+
+class DimDeal(Base):
+    """Flip trade lifecycle — from purchase through Steam trade ban to sale or stop-loss."""
+
+    __tablename__ = "dim_deals"
+
+    deal_id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    container_id = Column(String(36), ForeignKey("dim_containers.container_id"), nullable=False)
+    entry_price = Column(Float, nullable=False)        # price paid per unit
+    entry_date = Column(DateTime, nullable=False)      # when purchased
+    unlock_date = Column(DateTime, nullable=False)     # entry_date + 7 days (Steam trade ban)
+    qty = Column(Integer, nullable=False)              # units purchased
+    sell_target = Column(Float, nullable=False)        # entry_price × 1.21 (4-5% net after Steam 15% fee)
+    stop_loss = Column(Float, nullable=False)          # entry_price × 0.92 (accept -8% max loss)
+    status = Column(
+        Enum(DealStatus), nullable=False, default=DealStatus.LOCKED, index=True
+    )
+    created_at = Column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(UTC).replace(tzinfo=None),
+    )
+    closed_at = Column(DateTime, nullable=True)        # set when SOLD or STOPPED
+    closed_price = Column(Float, nullable=True)        # actual sell price
+
+    container = relationship("DimContainer")
+
+    def __repr__(self) -> str:
+        return (
+            f"<DimDeal {self.deal_id} container={self.container_id}"
+            f" x{self.qty} @ {self.entry_price:.0f} [{self.status}]>"
+        )
+
+
+class DimBannedAsset(Base):
+    """Dead assets excluded from future scans."""
+
+    __tablename__ = "dim_banned_assets"
+
+    ban_id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    container_id = Column(
+        String(36), ForeignKey("dim_containers.container_id"), nullable=False, unique=True
+    )
+    banned_at = Column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(UTC).replace(tzinfo=None),
+    )
+    reason = Column(String(255), nullable=True)        # e.g. "price_at_historical_min", "zero_volume"
+    banned_by = Column(String(50), nullable=False, default="system")  # "system" or "user"
+
+    container = relationship("DimContainer")
+
+    def __repr__(self) -> str:
+        return f"<DimBannedAsset container={self.container_id} reason={self.reason!r} by={self.banned_by!r}>"
 
 
 # ─── Phase 4 — Infrastructure & Reliability ───────────────────────────────────

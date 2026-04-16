@@ -41,17 +41,21 @@ class PostgresRepository(AbstractRepository):
         price: float,
         timestamp: datetime,
     ) -> None:
+        from sqlalchemy.dialects.postgresql import insert
         from src.domain.models import FactContainerPrice
 
-        row = FactContainerPrice(
-            id=str(uuid.uuid4()),
-            container_id=item_id,
-            timestamp=timestamp,
-            price=price,
-            source="steam_market",
+        stmt = (
+            insert(FactContainerPrice)
+            .values(
+                id=str(uuid.uuid4()),
+                container_id=item_id,
+                timestamp=timestamp,
+                price=price,
+                source="steam_market",
+            )
+            .on_conflict_do_nothing(index_elements=["container_id", "timestamp"])
         )
-        self._db.add(row)
-        self._db.flush()
+        self._db.execute(stmt)
 
     def update_container_tier(self, item_id: str, tier: int) -> None:
         """
@@ -150,23 +154,30 @@ class PostgresRepository(AbstractRepository):
         return {str(cid): ts for cid, ts in rows if ts is not None}
 
     def bulk_add_prices(self, rows: "list[dict]") -> None:
+        if not rows:
+            return
+        from sqlalchemy.dialects.postgresql import insert
         from src.domain.models import FactContainerPrice
 
-        objs = [
-            FactContainerPrice(
-                id=str(uuid.uuid4()),
-                container_id=r["container_id"],
-                timestamp=r["timestamp"],
-                price=r["price"],
-                volume_7d=r.get("volume_7d", 0),
-                mean_price=r.get("mean_price"),
-                lowest_price=r.get("lowest_price"),
-                source=r.get("source", "steam_market"),
-            )
+        values = [
+            {
+                "id": str(uuid.uuid4()),
+                "container_id": r["container_id"],
+                "timestamp": r["timestamp"],
+                "price": r["price"],
+                "volume_7d": r.get("volume_7d", 0),
+                "mean_price": r.get("mean_price"),
+                "lowest_price": r.get("lowest_price"),
+                "source": r.get("source", "steam_market"),
+            }
             for r in rows
         ]
-        self._db.bulk_save_objects(objs)
-        self._db.flush()
+        stmt = (
+            insert(FactContainerPrice)
+            .values(values)
+            .on_conflict_do_nothing(index_elements=["container_id", "timestamp"])
+        )
+        self._db.execute(stmt)
 
     def downsample_old_prices(self, days_threshold: int = 90) -> tuple[int, int]:
         """
