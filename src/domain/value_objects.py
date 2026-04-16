@@ -4,17 +4,15 @@ import functools
 from dataclasses import dataclass
 
 
-def _round_half_up(x: float) -> float:
-    return float(int(x + 0.5) if x >= 0 else -int(-x + 0.5))
-
-
 @functools.total_ordering
 @dataclass(frozen=True)
 class Amount:
-    amount: float
+    """Monetary amount in whole integer units (e.g. kopecks, cents)."""
+
+    amount: int
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "amount", _round_half_up(self.amount))
+        object.__setattr__(self, "amount", round(self.amount))
 
     def __add__(self, other: Amount) -> Amount:
         if not isinstance(other, Amount):
@@ -29,7 +27,7 @@ class Amount:
     def __mul__(self, factor: int | float) -> Amount:
         if not isinstance(factor, (int, float)):
             return NotImplemented
-        return Amount(self.amount * factor)
+        return Amount(round(self.amount * factor))
 
     def __rmul__(self, factor: int | float) -> Amount:
         return self.__mul__(factor)
@@ -37,7 +35,7 @@ class Amount:
     def __truediv__(self, divisor: int | float) -> Amount:
         if not isinstance(divisor, (int, float)):
             return NotImplemented
-        return Amount(self.amount / divisor)
+        return Amount(round(self.amount / divisor))
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Amount):
@@ -53,7 +51,7 @@ class Amount:
         return hash(self.amount)
 
     def __str__(self) -> str:
-        return f"{int(self.amount):,}"
+        return f"{self.amount:,}"
 
 
 @functools.total_ordering
