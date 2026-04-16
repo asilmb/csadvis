@@ -15,8 +15,9 @@ def startup_auth_check(settings) -> bool:
     Writes EXPIRED status to DB if check fails.
     Never raises — failures are logged and treated as non-fatal.
     """
-    if not settings.steam_login_secure:
-        print("[UP] WARNING: STEAM_LOGIN_SECURE not set — add it via the dashboard modal.")
+    from infra.steam_credentials import get_login_secure
+    if not get_login_secure():
+        print("[UP] WARNING: No Steam cookie set — enter it via the dashboard cookie form.")
         return False
     try:
         from scrapper.steam_wallet import fetch_wallet_balance

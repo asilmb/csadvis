@@ -17,6 +17,7 @@ import httpx
 
 from config import settings
 from infra.redis_client import get_redis
+from infra.steam_credentials import get_login_secure, set_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -78,10 +79,10 @@ def fetch_wallet_balance() -> tuple[float | None, str]:
     Uses STEAM_LOGIN_SECURE cookie from settings (same as backfill).
     Returns (balance, message) — balance is None on failure.
     """
-    cookie = settings.steam_login_secure
+    cookie = get_login_secure()
     if not cookie:
         # Try to read directly from Chrome browser on Windows
-        logger.info("STEAM_LOGIN_SECURE not in .env — trying Chrome cookie store...")
+        logger.info("No Steam cookie in Redis — trying Chrome cookie store...")
         cookie = read_cookie_from_chrome()
         if not cookie:
             return None, "NO_COOKIE"
@@ -115,11 +116,9 @@ def fetch_wallet_balance() -> tuple[float | None, str]:
     # Auto-extract sessionid from response cookies (PV-52) — best-effort, non-fatal
     try:
         sid = resp.cookies.get("sessionid")
-        if sid and sid != settings.steam_session_id:
-            settings.steam_session_id = sid
-            import os as _os
-            _os.environ["STEAM_SESSION_ID"] = sid
-            logger.info("steam_wallet: sessionid auto-extracted from Set-Cookie and saved to runtime")
+        if sid:
+            set_session_id(sid)
+            logger.info("steam_wallet: sessionid auto-extracted from Set-Cookie and saved to Redis")
     except Exception:
         pass
 

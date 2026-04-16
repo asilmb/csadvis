@@ -319,11 +319,11 @@ def cmd_status(args) -> None:
     state = get_state()
     print(f"  Last scraped  : {state.get('last_parsed', 'never')}")
 
-    from config import settings
+    from infra.steam_credentials import get_login_secure
 
-    cookie_len = len(settings.steam_login_secure.strip())
+    cookie_len = len(get_login_secure())
     if cookie_len == 0:
-        print("  Cookie        : NOT SET — price history and transactions unavailable")
+        print("  Cookie        : NOT SET — enter it via the dashboard cookie form")
     elif cookie_len < 50:
         print(f"  Cookie        : SUSPICIOUS (length={cookie_len}, expected >200)")
     else:

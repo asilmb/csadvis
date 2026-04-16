@@ -13,8 +13,6 @@ class Settings(BaseSettings):
         extra="ignore",  # silently drop unknown .env keys (e.g. old Skinport fields)
     )
 
-    steam_login_secure: str = ""  # steamLoginSecure cookie for Steam Market history
-    steam_session_id: str = ""   # sessionid cookie — required for /myhistory (PV-52)
     steam_id: str = ""  # Steam ID for inventory auto-load (e.g. 76561198...)
     log_level: str = "INFO"
     api_host: str = "0.0.0.0"

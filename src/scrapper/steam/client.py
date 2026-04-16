@@ -3,9 +3,9 @@ Low-level Steam Community Market HTTP client (PV-48).
 
 TLS impersonation
 -----------------
-Uses curl_cffi.requests.AsyncSession with impersonate="chrome120" so the
+Uses curl_cffi.requests.AsyncSession with impersonate="chrome131" so the
 TLS ClientHello (JA3), HTTP/2 SETTINGS frames, and pseudo-header order all
-match a real Chrome 120 browser — Steam's bot-detection cannot distinguish
+match a real Chrome 131 browser — Steam's bot-detection cannot distinguish
 these requests from a normal browser session.
 
 Session reuse
@@ -19,8 +19,9 @@ Cookie persistence
 ------------------
 Cookies that Steam sets during a session (sessionid, steamMachineAuth*, etc.)
 are saved to Redis on __aexit__ and reloaded on __aenter__, giving continuity
-across Celery task invocations.  steamLoginSecure always comes from settings
-and is never overwritten by the Redis cache.
+across Celery task invocations.  steamLoginSecure comes from the Redis
+credential store (infra.steam_credentials) and is never overwritten by the
+session cookie cache.
 
 Usage
 -----
@@ -39,8 +40,8 @@ from datetime import UTC, datetime, timedelta
 
 import structlog
 
-from config import settings
 from infra.redis_client import get_redis
+from infra.steam_credentials import get_login_secure, get_session_id
 from scrapper.steam.formatter import InvalidHashNameError, to_api_name
 from scrapper.steam_rate_limit import request_delay
 from scrapper.steam.parser import (
@@ -67,12 +68,12 @@ _EMERGENCY_BLOCK_TTL   = _EMERGENCY_BLOCK_HOURS * 3600
 _BACKOFF_BASE_SECONDS  = 120
 _BACKOFF_CAP_SECONDS   = _EMERGENCY_BLOCK_TTL
 
-_IMPERSONATE  = "chrome120"
+_IMPERSONATE  = "chrome131"
 _COOKIE_KEY   = "cs2:steam:session_cookies"
 _COOKIE_TTL   = 86_400   # 24 h — refresh on every successful batch
 
 # Cookies Steam sets server-side that are worth carrying across sessions.
-# steamLoginSecure is deliberately excluded — it always comes from .env.
+# steamLoginSecure is deliberately excluded — it comes from the credential store.
 _PERSIST_PREFIXES = ("steamMachineAuth", "sessionid", "steamCountry", "timezoneOffset")
 
 
@@ -151,14 +152,13 @@ class SteamMarketClient:
     """Async Steam Market client — TLS-impersonated, session-persistent."""
 
     def __init__(self, attempt: int = 0) -> None:
-        cookie = settings.steam_login_secure
+        cookie = get_login_secure()
         if not cookie:
             raise RuntimeError(
-                "STEAM_LOGIN_SECURE not set in .env — "
-                "copy steamLoginSecure cookie from your browser."
+                "No Steam cookie set — open the dashboard and enter your steamLoginSecure cookie."
             )
         self._login_secure: str = cookie
-        self._session_id_cfg: str = settings.steam_session_id or ""
+        self._session_id_cfg: str = get_session_id()
         self._session = None   # curl_cffi.requests.AsyncSession — created lazily
         # Celery retry index passed in by the caller so the exponential backoff
         # TTL escalates correctly across task retries (0 = first attempt).
@@ -185,7 +185,7 @@ class SteamMarketClient:
         """
         Write eligible cookies from the live session back to Redis so the
         next batch can reuse them without a fresh login flow.
-        steamLoginSecure is intentionally excluded — it lives in .env only.
+        steamLoginSecure is intentionally excluded — it lives in the credential store only.
         """
         if self._session is None:
             return
@@ -215,7 +215,7 @@ class SteamMarketClient:
         from curl_cffi.requests import AsyncSession
 
         # Start with any cookies persisted from a prior batch, then overlay
-        # the authoritative auth cookies from .env so they always win.
+        # the authoritative auth cookie from the credential store so it always wins.
         cookies = self._load_persisted_cookies()
         cookies["steamLoginSecure"] = self._login_secure
         if self._session_id_cfg:
@@ -244,11 +244,11 @@ class SteamMarketClient:
     @property
     def _steam_headers(self) -> dict[str, str]:
         """
-        Full Chrome 120 header set added on top of the TLS fingerprint that
+        Full Chrome 131 header set added on top of the TLS fingerprint that
         curl_cffi injects via impersonation.
 
         All Sec-Ch-Ua / Sec-Fetch-* values are kept in exact syntactic lock-step
-        with the impersonate="chrome120" profile (Windows, desktop, non-mobile).
+        with the impersonate="chrome131" profile (Windows, desktop, non-mobile).
         Changing _IMPERSONATE without updating these headers would produce a
         detectable fingerprint mismatch.
         """
@@ -259,8 +259,8 @@ class SteamMarketClient:
             # ── Steam-specific ─────────────────────────────────────────────────
             "Referer": "https://steamcommunity.com/market/",
             "X-Requested-With": "XMLHttpRequest",
-            # ── Client Hints — must match Chrome 120 on Windows ───────────────
-            "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+            # ── Client Hints — must match Chrome 131 on Windows ───────────────
+            "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
             "Sec-Ch-Ua-Mobile": "?0",
             "Sec-Ch-Ua-Platform": '"Windows"',
             # ── Fetch metadata ─────────────────────────────────────────────────
@@ -398,6 +398,10 @@ class SteamMarketClient:
         item_nameid is a stable integer required by the itemordershistogram
         endpoint.  Rate-limited: sleeps _DELAY_SECONDS after the request.
         """
+        if _is_emergency_blocked():
+            logger.debug("[Stealth] fetch_nameid skipped — emergency stop active")
+            return None
+
         url = _LISTINGS_URL + market_hash_name
 
         from curl_cffi.requests import RequestsError
@@ -414,6 +418,9 @@ class SteamMarketClient:
         finally:
             await asyncio.sleep(request_delay())
 
+        if resp.status_code == 429:
+            _trigger_emergency_stop(market_hash_name, attempt=self._attempt)
+            return None
         if resp.status_code != 200:
             logger.warning(
                 "fetch_nameid_http_error",
@@ -459,6 +466,7 @@ class SteamMarketClient:
 
         if resp.status_code == 429:
             logger.warning("fetch_order_book_rate_limited", service="steam_client", nameid=item_nameid)
+            _trigger_emergency_stop(str(item_nameid), attempt=self._attempt)
             return {}
         if resp.status_code != 200:
             logger.warning(

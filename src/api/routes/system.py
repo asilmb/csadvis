@@ -8,12 +8,9 @@ GET  /system/cookie-status  — return current cookie status from DB
 from __future__ import annotations
 
 import logging
-import os
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-
-from config import settings, _ENV_FILE
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/system", tags=["system"])
@@ -47,26 +44,13 @@ def update_cookie_endpoint(req: UpdateCookieRequest) -> dict:
     # SECURITY: cookie value is NEVER logged — only a masked confirmation
     logger.info("Cookie update requested — applying new value (masked: ***)")
 
-    # 1. Update runtime settings (in-memory) — no restart needed
-    os.environ["STEAM_LOGIN_SECURE"] = value
-    settings.steam_login_secure = value  # pydantic-settings v2 not frozen
-
+    # 1. Persist credentials to Redis
+    from infra.steam_credentials import set_login_secure, set_session_id
+    set_login_secure(value)
     if req.sessionid.strip():
-        sid = req.sessionid.strip()
-        os.environ["STEAM_SESSION_ID"] = sid
-        settings.steam_session_id = sid
+        set_session_id(req.sessionid.strip())
 
-    # 2. Persist to .env for next restart
-    try:
-        from dotenv import set_key
-        set_key(str(_ENV_FILE), "STEAM_LOGIN_SECURE", value)
-        if req.sessionid.strip():
-            set_key(str(_ENV_FILE), "STEAM_SESSION_ID", req.sessionid.strip())
-        logger.info("Cookie(s) persisted to .env (masked)")
-    except Exception as exc:
-        logger.warning("Could not persist cookie to .env: %s", exc)
-
-    # 3. Validate cookie by attempting a wallet sync (sets cookie_status=VALID on success)
+    # 2. Validate cookie by attempting a wallet sync (sets cookie_status=VALID on success)
     from scrapper.steam_sync import sync_wallet
     result = sync_wallet()
 
@@ -105,6 +89,13 @@ def update_cookie_endpoint(req: UpdateCookieRequest) -> dict:
             text("UPDATE worker_registry SET status='IDLE', current_task_id=NULL WHERE status='BUSY'")
         ).rowcount
         db.commit()
+
+    # 7. Clear Redis stealth block so workers resume immediately
+    try:
+        from infra.redis_client import get_redis as _get_redis
+        _get_redis().delete("STEALTH_BLOCK_EXPIRES")
+    except Exception as exc:
+        logger.warning("Could not clear stealth block: %s", exc)
 
     logger.info(
         "Cookie hot-swap successful — %d FAILED tasks reset to PENDING, %d workers released",

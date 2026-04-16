@@ -30,9 +30,10 @@ def cmd_init(args) -> None:
         ok = False
 
     # ── Required vars ────────────────────────────────────────────────────────
-    _s = "OK (set)" if settings.steam_login_secure else "NOT SET — add STEAM_LOGIN_SECURE= to .env"
+    from infra.steam_credentials import get_login_secure
+    _s = "OK (set)" if get_login_secure() else "NOT SET — enter it via the dashboard cookie form"
     print(f"[INIT] STEAM_LOGIN_SECURE {_s}")
-    if not settings.steam_login_secure:
+    if not get_login_secure():
         ok = False
 
     _s = f"OK ({settings.steam_id})" if settings.steam_id else "NOT SET — add STEAM_ID= to .env"
@@ -67,11 +68,12 @@ def cmd_init(args) -> None:
     # ── Steam cookie validation ───────────────────────────────────────────────
     print("[INIT] Steam cookie .... ", end="", flush=True)
     try:
+        from infra.steam_credentials import get_login_secure as _get_cookie
         resp = httpx.get(
             "https://steamcommunity.com/market/priceoverview/",
             params={"appid": 730, "currency": 37, "market_hash_name": "Revolution Case"},
             headers={
-                "Cookie": f"steamLoginSecure={settings.steam_login_secure}",
+                "Cookie": f"steamLoginSecure={_get_cookie()}",
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
@@ -93,26 +95,10 @@ def cmd_init(args) -> None:
 
 
 def cmd_cookie(args) -> None:
-    """Save Steam login cookie to .env (auto-reads from Chrome or guides manually)."""
+    """Save Steam login cookie to Redis (auto-reads from Chrome or guides manually)."""
     import webbrowser
 
-    env_path = _PROJECT_ROOT / ".env"
-
-    def _save_to_env(cookie_value: str) -> None:
-        """Write or update STEAM_LOGIN_SECURE= line in .env."""
-        if env_path.exists():
-            lines = env_path.read_text(encoding="utf-8").splitlines()
-            updated = False
-            for i, line in enumerate(lines):
-                if line.startswith("STEAM_LOGIN_SECURE="):
-                    lines[i] = f"STEAM_LOGIN_SECURE={cookie_value}"
-                    updated = True
-                    break
-            if not updated:
-                lines.append(f"STEAM_LOGIN_SECURE={cookie_value}")
-            env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        else:
-            env_path.write_text(f"STEAM_LOGIN_SECURE={cookie_value}\n", encoding="utf-8")
+    from infra.steam_credentials import set_login_secure
 
     # ── Try auto-read from Chrome (only works when Chrome is closed) ──────────
     print("\n  Trying to read cookie from Chrome automatically...")
@@ -121,9 +107,8 @@ def cmd_cookie(args) -> None:
 
         cookie = read_cookie_from_chrome()
         if cookie:
-            _save_to_env(cookie)
-            print(f"  Done! steamLoginSecure saved to .env  (length: {len(cookie)})")
-            print("  Restart cs2 dashboard and cs2 start to apply.\n")
+            set_login_secure(cookie)
+            print(f"  Done! steamLoginSecure saved to Redis  (length: {len(cookie)})")
             return
         print("  Auto-read failed (Chrome is open or no Steam session found).")
     except Exception as exc:
@@ -152,9 +137,8 @@ def cmd_cookie(args) -> None:
         print("  Nothing entered. Aborted.\n")
         return
 
-    _save_to_env(value)
-    print(f"\n  Saved to .env  (length: {len(value)})")
-    print("  Restart cs2 dashboard and cs2 start to apply.\n")
+    set_login_secure(value)
+    print(f"\n  Saved to Redis  (length: {len(value)})\n")
 
 
 def cmd_clean(args) -> None:

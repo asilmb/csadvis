@@ -391,10 +391,10 @@ class TaskQueueService:
         except Exception:
             pass  # DB unavailable — return zeroed health snapshot
 
-        from config import settings
+        from infra.steam_credentials import get_login_secure
 
         return SystemHealth(
-            cookie_set=bool(settings.steam_login_secure),
+            cookie_set=bool(get_login_secure()),
             tokens=None,
             token_level="N/A",
             circuit_open=False,

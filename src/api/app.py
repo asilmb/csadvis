@@ -8,7 +8,6 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.routes import (
-    auth_router,
     containers_router,
     items_router,
     metrics_router,
@@ -72,7 +71,6 @@ def create_app(lifespan: Any = None) -> FastAPI:
         return response
 
     # ── Routers ───────────────────────────────────────────────────────────────
-    app.include_router(auth_router, prefix="/api/v1")
     app.include_router(containers_router, prefix="/api/v1")
     app.include_router(items_router, prefix="/api/v1")
     app.include_router(stats_router, prefix="/api/v1")

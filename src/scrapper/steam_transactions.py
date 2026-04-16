@@ -27,7 +27,7 @@ from typing import Any
 
 import httpx
 
-from config import settings
+from infra.steam_credentials import get_login_secure, get_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ def fetch_market_history(max_pages: int = 10) -> tuple[list[dict], str]:
         price       — float  (amount: received for SELL, paid for BUY)
         total       — float  (same as price; Steam Market is always qty=1)
     """
-    cookie = settings.steam_login_secure
+    cookie = get_login_secure()
     if not cookie:
         return [], "NO_COOKIE"
 
@@ -68,8 +68,8 @@ def fetch_market_history(max_pages: int = 10) -> tuple[list[dict], str]:
         "Referer": "https://steamcommunity.com/market/",
     }
     cookies: dict[str, str] = {"steamLoginSecure": cookie}
-    if settings.steam_session_id:
-        cookies["sessionid"] = settings.steam_session_id
+    if get_session_id():
+        cookies["sessionid"] = get_session_id()
 
     all_rows: list[dict] = []
     page_size = 500

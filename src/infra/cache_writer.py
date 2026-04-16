@@ -153,12 +153,12 @@ def _fetch_order_book_data(
     """
     import asyncio
 
-    from config import settings
     from src.domain.wall_filter import compute_wall_metrics, get_best_buy_order  # noqa: F401
     from scrapper.nameid_cache import load_nameid_cache, save_nameid_cache
     from scrapper.steam.client import SteamMarketClient
+    from infra.steam_credentials import get_login_secure
 
-    if not settings.steam_login_secure:
+    if not get_login_secure():
         logger.debug("_fetch_order_book_data: no Steam cookie — skipping wall fetch")
         return None
 
