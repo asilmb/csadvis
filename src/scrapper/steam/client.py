@@ -79,6 +79,21 @@ _PERSIST_PREFIXES = ("steamMachineAuth", "sessionid", "steamCountry", "timezoneO
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _ensure_json(resp: object, context: str) -> None:
+    """
+    Raise RuntimeError if the response is not JSON (e.g. Cloudflare HTML block).
+
+    Steam returns application/json or text/javascript for valid API responses.
+    A text/html Content-Type at HTTP 200 means Cloudflare intercepted the request.
+    """
+    ct = getattr(resp, "headers", {}).get("content-type", "")
+    if "text/html" in ct:
+        raise RuntimeError(
+            f"Steam returned HTML instead of JSON for {context!r} "
+            f"(Content-Type: {ct!r}) — likely a Cloudflare block"
+        )
+
+
 def _is_emergency_blocked() -> bool:
     """Return True if a 429-triggered 6 h block is currently active."""
     try:
@@ -329,6 +344,7 @@ class SteamMarketClient:
         if resp.status_code != 200:
             resp.raise_for_status()
 
+        _ensure_json(resp, market_hash_name)
         data = resp.json()
         if not data.get("success"):
             logger.warning("steam_success_false", service="steam_client", name=market_hash_name)
@@ -350,17 +366,8 @@ class SteamMarketClient:
         api_name = to_api_name(market_hash_name)
         params = {"appid": "730", "market_hash_name": api_name, "currency": "37"}
 
-        from curl_cffi.requests import RequestsError
-        try:
-            resp = await self._get(_OVERVIEW_URL, params=params)
-        except RequestsError as exc:
-            logger.warning(
-                "priceoverview_request_failed",
-                service="steam_client",
-                name=market_hash_name,
-                error=str(exc),
-            )
-            return {}
+        # Let RequestsError propagate — Celery task catches it and retries.
+        resp = await self._get(_OVERVIEW_URL, params=params)
 
         if resp.status_code == 429:
             _trigger_emergency_stop(market_hash_name, attempt=self._attempt)
@@ -385,6 +392,7 @@ class SteamMarketClient:
             )
             return {}
 
+        _ensure_json(resp, market_hash_name)
         data = resp.json()
         if not data.get("success"):
             return {}
@@ -478,6 +486,7 @@ class SteamMarketClient:
             return {}
 
         try:
+            _ensure_json(resp, str(item_nameid))
             data = resp.json()
         except Exception as exc:
             logger.warning(
