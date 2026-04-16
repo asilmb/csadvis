@@ -9,27 +9,27 @@ database/repositories.py and must not import src.domain logic.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TypedDict
 
 from src.domain.value_objects import Amount
+
+
+class ItemOverviewRow(TypedDict):
+    """Shape returned by InventoryRepository.get_all_items()."""
+
+    name: str
+    current_price: float | None
+    mean_price: float | None    # 30-day mean
+    quantity: int               # 7-day traded volume
+    lowest_price: float | None
 
 
 class InventoryRepository(ABC):
     """Abstract contract for inventory and portfolio balance data access."""
 
     @abstractmethod
-    def get_all_items(self) -> list[dict]:
-        """
-        Return current price data for every tracked container.
-
-        Each dict shape:
-            {
-                "name":          str,
-                "current_price": float | None,
-                "mean_price":    float | None,   # 30-day mean
-                "quantity":      int,             # 7-day traded volume
-                "lowest_price":  float | None,
-            }
-        """
+    def get_all_items(self) -> list[ItemOverviewRow]:
+        """Return current price data for every tracked container."""
 
     @abstractmethod
     def update_item_quantity(self, item_name: str, qty: int) -> None:

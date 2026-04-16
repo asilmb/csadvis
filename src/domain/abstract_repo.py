@@ -28,7 +28,33 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List
+from typing import TypedDict
+
+
+# ─── TypedDicts for loose collection return types ────────────────────────────
+
+
+class PriceHistoryRow(TypedDict):
+    """Shape returned by PriceRepository.get_price_history()."""
+
+    timestamp: str          # "YYYY-MM-DD HH:MM"
+    price: float
+    volume_7d: int
+
+
+class _BulkPriceRowRequired(TypedDict):
+    container_id: str
+    timestamp: datetime
+    price: float
+
+
+class BulkPriceRow(_BulkPriceRowRequired, total=False):
+    """Shape accepted by AbstractRepository.bulk_add_prices()."""
+
+    volume_7d: int
+    mean_price: float | None
+    lowest_price: float | None
+    source: str
 
 
 # ─── Legacy DTOs (AbstractRepository) ────────────────────────────────────────
@@ -107,7 +133,7 @@ class TaskDTO:
 class AbstractRepository(ABC):
 
     @abstractmethod
-    def get_all_containers(self) -> List[ContainerDTO]:
+    def get_all_containers(self) -> list[ContainerDTO]:
         ...
 
     @abstractmethod
@@ -124,11 +150,11 @@ class AbstractRepository(ABC):
         ...
 
     @abstractmethod
-    def get_price_history(self, item_id: str, days: int) -> List[PriceDTO]:
+    def get_price_history(self, item_id: str, days: int) -> list[PriceDTO]:
         ...
 
     @abstractmethod
-    def get_market_sync_list(self) -> List[str]:
+    def get_market_sync_list(self) -> list[str]:
         ...
 
     @abstractmethod
@@ -137,8 +163,8 @@ class AbstractRepository(ABC):
         ...
 
     @abstractmethod
-    def get_prices_since(self, cutoff: datetime) -> List[tuple]:
-        """Return list of (container_id: str, price: float) since cutoff."""
+    def get_prices_since(self, cutoff: datetime) -> list[tuple[str, float]]:
+        """Return list of (container_id, price) tuples since cutoff."""
         ...
 
     @abstractmethod
@@ -151,19 +177,13 @@ class AbstractRepository(ABC):
         ...
 
     @abstractmethod
-    def bulk_add_prices(self, rows: list[dict]) -> None:
+    def bulk_add_prices(self, rows: list[BulkPriceRow]) -> None:
         """
-        Insert multiple price rows in a single flush.
+        Insert multiple price rows in a single operation.
 
-        Each dict must have:
-          container_id: str
-          timestamp:    datetime
-          price:        float
+        Required keys: container_id, timestamp, price.
         Optional keys (default to None/0/"steam_market"):
-          volume_7d:    int
-          mean_price:   float | None
-          lowest_price: float | None
-          source:       str
+          volume_7d, mean_price, lowest_price, source.
         """
         ...
 
@@ -280,11 +300,10 @@ class PriceRepository(ABC):
         """
 
     @abstractmethod
-    def get_price_history(self, container_name: str) -> list[dict]:
+    def get_price_history(self, container_name: str) -> list[PriceHistoryRow]:
         """
         Return all price rows for container_name ordered by timestamp ASC.
 
-        Shape: [{"timestamp": "YYYY-MM-DD HH:MM", "price": float, "volume_7d": int}]
         Returns an empty list when the container is unknown or has no rows.
         """
 
