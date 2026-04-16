@@ -12,12 +12,14 @@ from typing import Any
 
 
 def _parse_steam_price(s: str) -> float:
-    """Parse Steam price string to float.
+    """Parse Steam price string to float rounded to 2 decimal places.
 
     Handles:  "$1.25"  "1 234,56 ₸"  "1.25"  "1,234.56"
     Returns 0.0 on failure.
 
     Currency symbols, spaces, and non-numeric chars are stripped automatically.
+    Result is rounded to 2dp to avoid IEEE-754 noise (e.g. 0.10000000000000001).
+    Full Decimal precision will be introduced in the domain layer (Task #18/#23).
     """
     if not s:
         return 0.0
@@ -41,7 +43,7 @@ def _parse_steam_price(s: str) -> float:
         else:
             cleaned = cleaned.replace(",", "")
     try:
-        return float(cleaned)
+        return round(float(cleaned), 2)
     except ValueError:
         return 0.0
 
