@@ -7,7 +7,7 @@ Dead EV/ROI/Risk schemas removed (2026-03-27) — see git history if needed.
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # ─── Container list response ──────────────────────────────────────────────────
 
@@ -16,14 +16,14 @@ class ContainerListItem(BaseModel):
     container_id: str
     container_name: str
     container_type: str
-    base_cost: float
+    base_cost: float = Field(ge=0)
     verdict: str  # BUY / LEAN BUY / HOLD / LEAN SELL / SELL / NO DATA
-    current_price: float | None = None
-    baseline_price: float | None = None
+    current_price: float | None = Field(None, ge=0)
+    baseline_price: float | None = Field(None, ge=0)
     price_ratio_pct: float | None = None
     momentum_pct: float | None = None
-    quantity: int = 0
-    score: int = 0
+    quantity: int = Field(0, ge=0)
+    score: int = Field(0, ge=0)
     sell_at_loss: bool | None = None
 
 
@@ -32,9 +32,9 @@ class ContainerListItem(BaseModel):
 
 class PriceHistoryEntry(BaseModel):
     timestamp: str
-    price: float | None = None
-    mean_price: float | None = None
-    volume_7d: int | None = None
+    price: float | None = Field(None, ge=0)
+    mean_price: float | None = Field(None, ge=0)
+    volume_7d: int | None = Field(None, ge=0)
 
 
 class ContainerDetail(ContainerListItem):
@@ -46,22 +46,22 @@ class ContainerDetail(ContainerListItem):
 
 class SyncWalletResponse(BaseModel):
     ok: bool
-    balance: float | None = None
+    balance: float | None = Field(None, ge=0)
     message: str
     error_code: str | None = None  # "NO_COOKIE" | "STALE_COOKIE" | "NETWORK" | None
 
 
 class SyncInventoryResponse(BaseModel):
     ok: bool
-    count: int = 0
+    count: int = Field(0, ge=0)
     message: str
     error_code: str | None = None  # "NO_STEAM_ID" | "NETWORK" | None
 
 
 class SyncTransactionsResponse(BaseModel):
     ok: bool
-    buy_count: int = 0
-    sell_count: int = 0
+    buy_count: int = Field(0, ge=0)
+    sell_count: int = Field(0, ge=0)
     message: str
     error_code: str | None = None  # "NO_COOKIE" | "STALE_COOKIE" | "NETWORK" | None
 
