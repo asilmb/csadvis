@@ -55,13 +55,31 @@ def _render_balance_tab(wallet_balance: Any, inventory_data: Any) -> html.Div:
 def register_callbacks(app: Any) -> None:
     """Register all Dash callbacks on the given app instance."""
 
+    # ── Task-completion poller: reads Redis key, updates store on change ──────
+    @app.callback(
+        Output("task-done-ts", "data"),
+        Input("task-poll-interval", "n_intervals"),
+        State("task-done-ts", "data"),
+        prevent_initial_call=False,
+    )
+    def poll_task_done(n: Any, current_ts: Any) -> Any:
+        try:
+            from infra.redis_client import get_redis
+            ts = get_redis().get("cs2:ui:last_task_done")
+        except Exception:
+            ts = None
+        if ts and ts != current_ts:
+            return ts
+        raise dash.exceptions.PreventUpdate
+
     @app.callback(
         Output("raw-items-store", "data"),
         Output("invest-store", "data"),
-        Input("auto-refresh", "n_intervals"),
+        Input("task-done-ts", "data"),
+        Input("startup-interval", "n_intervals"),
         prevent_initial_call=False,
     )
-    def refresh_prices(n_intervals: Any) -> Any:
+    def refresh_prices(_ts: Any, _startup: Any) -> Any:
         # PV-05: all market data flows through ItemService (never raw repo/DB in callbacks)
         from src.domain.item_service import ItemService
 
@@ -250,9 +268,9 @@ def register_callbacks(app: Any) -> None:
     @app.callback(
         Output("price-count-store", "data"),
         Input("startup-interval", "n_intervals"),
-        Input("auto-refresh", "n_intervals"),
+        Input("task-done-ts", "data"),
     )
-    def load_price_count(_startup: Any, _refresh: Any) -> Any:
+    def load_price_count(_startup: Any, _ts: Any) -> Any:
         """Return number of items with prices so render_tab can show cold-start banner."""
         try:
             from src.domain.item_service import ItemService
@@ -445,22 +463,14 @@ def register_callbacks(app: Any) -> None:
             return render_system_status(health=_health)  # PV-46: instant load on default tab
         return _no_data()
 
-    # ── System Status: enable/disable interval based on active tab ────────────
-    @app.callback(
-        Output("health-interval", "disabled"),
-        Input("main-tabs", "value"),
-    )
-    def toggle_health_interval(tab: Any) -> bool:
-        return tab != "system"
-
-    # ── System Status: refresh health data on interval ────────────────────────
+    # ── System Status: refresh on task completion (only when on system tab) ────
     @app.callback(
         Output("tab-content", "children", allow_duplicate=True),
-        Input("health-interval", "n_intervals"),
+        Input("task-done-ts", "data"),
         State("main-tabs", "value"),
         prevent_initial_call=True,
     )
-    def refresh_health_tab(n: Any, tab: Any) -> Any:
+    def refresh_health_tab(_ts: Any, tab: Any) -> Any:
         if tab != "system":
             raise dash.exceptions.PreventUpdate
         from ui.renderers.system_status import render_system_status
@@ -899,10 +909,11 @@ def register_callbacks(app: Any) -> None:
         Output("scheduler-badge", "style"),
         Output("emergency-block-badge", "children"),
         Output("emergency-block-badge", "style"),
-        Input("header-interval", "n_intervals"),
+        Input("task-done-ts", "data"),
+        Input("startup-interval", "n_intervals"),
         prevent_initial_call=False,
     )
-    def update_header_badges(_n: Any) -> Any:
+    def update_header_badges(_ts: Any, _startup: Any) -> Any:
         import os
 
         import redis as _redis_lib
@@ -987,6 +998,7 @@ def register_callbacks(app: Any) -> None:
             return html.Span(str(exc), style={"color": _RED, "fontSize": "12px"})
 
         rec_color = _GREEN if result.recommendation == "MARKET" else _ORANGE
+        signal_color = {"SELL": _GREEN, "WAIT": _YELLOW, "AVOID": _RED}.get(result.sell_signal, _MUTED)
         return html.Div(
             [
                 html.Span(
@@ -997,6 +1009,14 @@ def register_callbacks(app: Any) -> None:
                         "fontSize": "14px",
                         "marginRight": "12px",
                     },
+                ),
+                html.Span(
+                    f"Сигнал: {result.sell_signal}",
+                    style={"color": signal_color, "fontWeight": "bold", "fontSize": "13px", "marginRight": "12px"},
+                ),
+                html.Span(
+                    f"Листингуй от: {int(result.breakeven_listing_price):,}{_settings.currency_symbol}",
+                    style={"color": _TEXT, "fontSize": "12px", "marginRight": "12px"},
                 ),
                 html.Span(result.message, style={"color": _TEXT, "fontSize": "12px"}),
                 html.Div(
@@ -1017,11 +1037,11 @@ def register_callbacks(app: Any) -> None:
         Output("last-sync-indicator", "children"),
         Output("btn-sync-all", "disabled", allow_duplicate=True),
         Output("btn-sync-all", "children", allow_duplicate=True),
-        Input("sync-age-interval", "n_intervals"),
+        Input("task-done-ts", "data"),
         Input("sync-state", "data"),
         prevent_initial_call="initial_duplicate",
     )
-    def update_sync_status(n_intervals: Any, sync_data: Any) -> Any:
+    def update_sync_status(_ts: Any, sync_data: Any) -> Any:
         """Show last sync age and disable button while sync tasks are in queue."""
         from src.domain.connection import SessionLocal
         from src.domain.models import SystemSettings, TaskQueue, TaskStatus

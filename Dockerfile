@@ -8,7 +8,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
 # Install production dependencies into an isolated venv
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project --no-dev
+RUN uv sync --no-install-project --no-dev
 
 
 # ── Stage 2: runtime image ────────────────────────────────────────────────────
@@ -31,16 +31,13 @@ COPY --from=builder /app/.venv /app/.venv
 # Application source
 COPY src/       src/
 COPY config.py  .
-COPY infra/     infra/
-COPY seed/      seed/
-COPY scheduler/ scheduler/
 
 RUN mkdir -p /app/logs \
  && chown -R appuser:appuser /app
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONPATH=/app \
+    PYTHONPATH=/app:/app/src \
     PATH="/app/.venv/bin:$PATH" \
     LOG_DIR=/app/logs
 

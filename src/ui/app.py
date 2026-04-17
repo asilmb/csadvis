@@ -163,18 +163,15 @@ def create_dash_app() -> dash.Dash:
                             dcc.Store(id="portfolio-balance", data=None),
                             dcc.Store(id="balance-refresh-store", data=0),
                             dcc.Store(id="price-count-store", data=None),
-                            dcc.Interval(id="auto-refresh", interval=300_000, n_intervals=0),
+                            dcc.Store(id="task-done-ts", data=None),
                             dcc.Interval(
                                 id="startup-interval",
                                 interval=1_000,
                                 n_intervals=0,
                                 max_intervals=1,
                             ),
-                            dcc.Interval(
-                                id="header-interval",
-                                interval=60_000,
-                                n_intervals=0,
-                            ),
+                            # Lightweight Redis poller — only reads one key, no DB
+                            dcc.Interval(id="task-poll-interval", interval=2_000, n_intervals=0),
                             # Hidden stubs — callbacks write to these; UI no longer shows them
                             html.Div(id="btn-sync-all", style={"display": "none"}),
                             html.Div(id="last-sync-indicator", style={"display": "none"}),
@@ -186,7 +183,6 @@ def create_dash_app() -> dash.Dash:
                                 n_intervals=0,
                                 disabled=True,
                             ),
-                            dcc.Interval(id="sync-age-interval", interval=60_000, n_intervals=0),
                         ],
                     ),
                     # ── Main content ─────────────────────────────────────────────
@@ -221,13 +217,6 @@ def create_dash_app() -> dash.Dash:
                                         label="System", value="system", className="custom-tab"
                                     ),
                                 ],
-                            ),
-                            # System Status auto-refresh interval (3s, active on system tab only)
-                            dcc.Interval(
-                                id="health-interval",
-                                interval=3_000,
-                                n_intervals=0,
-                                disabled=True,
                             ),
                             # Controls below tabs — avoids layout shift when shown/hidden (UX-11)
                             html.Div(
@@ -289,8 +278,8 @@ def create_dash_app() -> dash.Dash:
                     "fontSize": "13px",
                 },
             ),
-            # Cookie status polling — 2s interval (PV-51: fast auth-loop detection)
-            dcc.Interval(id="cookie-status-interval", interval=2_000, n_intervals=0),
+            # Cookie status polling — 30s interval
+            dcc.Interval(id="cookie-status-interval", interval=30_000, n_intervals=0),
             # Cookie Hot-Swap Modal (PV-43) — opens automatically when cookie is EXPIRED
             dbc.Modal(
                 id="cookie-modal",

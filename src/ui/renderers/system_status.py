@@ -221,50 +221,59 @@ def render_system_status(health=None) -> html.Div:
     ], className="g-2", style={"marginBottom": "20px"})
 
     # ── Action buttons ────────────────────────────────────────────────────────
-    btn_row = dbc.Row([
-        dbc.Col(dbc.Button(
-            [html.I(className="fa fa-refresh me-1"), "Force Global Sync"],
-            id="btn-force-sync",
-            color="primary", size="sm", n_clicks=0,
-        ), width="auto"),
-        dbc.Col(dbc.Button(
-            "Sync Inventory",
-            id="btn-sync-inventory",
-            color="info", outline=True, size="sm", n_clicks=0,
-        ), width="auto"),
-        dbc.Col(dbc.Button(
-            "Sync Catalog",
-            id="btn-sync-catalog",
-            color="info", outline=True, size="sm", n_clicks=0,
-        ), width="auto"),
-        dbc.Col(dbc.Button(
-            "Sync Prices",
-            id="btn-sync-prices",
-            color="info", outline=True, size="sm", n_clicks=0,
-        ), width="auto"),
-        dbc.Col(dbc.Button(
-            "Reclaim Stuck",
-            id="btn-reclaim-stuck",
-            color="warning", outline=True, size="sm", n_clicks=0,
-        ), width="auto"),
-        dbc.Col(dbc.Button(
-            "Flush Failed",
-            id="btn-flush-failed",
-            color="danger", outline=True, size="sm", n_clicks=0,
-        ), width="auto"),
-        dbc.Col(dbc.Button(
-            "Reset Workers",
-            id="btn-reset-workers",
-            color="secondary", outline=True, size="sm", n_clicks=0,
-        ), width="auto"),
-        dbc.Col(
-            html.Span(
-                id="health-action-msg",
-                style={"color": _MUTED, "fontSize": "12px", "paddingTop": "4px"},
+    btn_row = html.Div([
+        dbc.Row([
+            dbc.Col(dbc.Button(
+                [html.I(className="fa fa-refresh me-1"), "Force Global Sync"],
+                id="btn-force-sync",
+                color="primary", size="sm", n_clicks=0,
+            ), width="auto"),
+            dbc.Col(dbc.Button(
+                "Sync Inventory",
+                id="btn-sync-inventory",
+                color="info", outline=True, size="sm", n_clicks=0,
+            ), width="auto"),
+            dbc.Col(dbc.Button(
+                "Sync Catalog",
+                id="btn-sync-catalog",
+                color="info", outline=True, size="sm", n_clicks=0,
+            ), width="auto"),
+            dbc.Col(dbc.Button(
+                "Sync Prices",
+                id="btn-sync-prices",
+                color="info", outline=True, size="sm", n_clicks=0,
+            ), width="auto"),
+            dbc.Col(dbc.Button(
+                "Reclaim Stuck",
+                id="btn-reclaim-stuck",
+                color="warning", outline=True, size="sm", n_clicks=0,
+            ), width="auto"),
+            dbc.Col(dbc.Button(
+                "Flush Failed",
+                id="btn-flush-failed",
+                color="danger", outline=True, size="sm", n_clicks=0,
+            ), width="auto"),
+            dbc.Col(dbc.Button(
+                "Reset Workers",
+                id="btn-reset-workers",
+                color="secondary", outline=True, size="sm", n_clicks=0,
+            ), width="auto"),
+            dbc.Col(
+                html.Span(
+                    id="health-action-msg",
+                    style={"color": _MUTED, "fontSize": "12px", "paddingTop": "4px"},
+                ),
+                width="auto",
             ),
-            width="auto",
-        ),
-    ], className="g-2 align-items-center", style={"marginBottom": "20px"})
+        ], className="g-2 align-items-center", style={"marginBottom": "20px"}),
+        dbc.Tooltip("Запускает полный цикл: цены + инвентарь + каталог + пересчёт портфеля", target="btn-force-sync", placement="bottom"),
+        dbc.Tooltip("Загружает актуальный инвентарь Steam (предметы на аккаунте)", target="btn-sync-inventory", placement="bottom"),
+        dbc.Tooltip("Обновляет список контейнеров с рынка Steam", target="btn-sync-catalog", placement="bottom"),
+        dbc.Tooltip("Получает текущие цены на все контейнеры из Steam Market", target="btn-sync-prices", placement="bottom"),
+        dbc.Tooltip("Освобождает задачи зависшие в статусе PROCESSING дольше допустимого", target="btn-reclaim-stuck", placement="bottom"),
+        dbc.Tooltip("Удаляет все задачи в статусе FAILED из очереди (необратимо)", target="btn-flush-failed", placement="bottom"),
+        dbc.Tooltip("Сбрасывает зависших/мёртвых воркеров в статус IDLE и снимает блокировки", target="btn-reset-workers", placement="bottom"),
+    ])
 
     footer = html.Div(
         f"Last refresh: {health.timestamp}",

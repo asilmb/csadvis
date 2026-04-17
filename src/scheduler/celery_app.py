@@ -13,9 +13,11 @@ Settings enforced:
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
 
 import structlog
 from celery import Celery
+from celery.signals import task_postrun
 
 logger = structlog.get_logger()
 
@@ -54,5 +56,16 @@ app.conf.update(
     enable_utc=True,
 
     # Autodiscover
-    include=["scheduler.tasks", "scraper.runner"],
+    include=["scheduler.tasks", "scrapper.runner"],
 )
+
+
+@task_postrun.connect
+def _notify_ui_on_task_done(task_id, task, retval, state, **kwargs):
+    if state != "SUCCESS":
+        return
+    try:
+        from infra.redis_client import get_redis
+        get_redis().set("cs2:ui:last_task_done", datetime.now(UTC).isoformat(), ex=86400)
+    except Exception:
+        pass
