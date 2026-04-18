@@ -34,18 +34,9 @@ def cmd_start(args):
     dash.run(host="0.0.0.0", port=8050, debug=False)
 
 def cmd_worker(args):
-    """Запуск Celery."""
-    from scheduler.celery_app import app as celery_app
-
-    configure_logging(log_level="INFO", log_dir=LOG_PATH)
-    worker_count = getattr(args, "workers", 2)
-
-    # Celery процесс
-    use_beat = getattr(args, "beat", False)
-    celery_argv = ["worker", f"--concurrency={worker_count}", "-E"]
-    if use_beat:
-        celery_argv += ["--beat"]
-    celery_app.worker_main(argv=celery_argv)
+    """Worker is now in-process — start the API instead: python src/main.py api"""
+    print("The Celery worker has been replaced by an in-process asyncio worker.")
+    print("Start the API server to activate it: python src/main.py api")
 
 def cmd_dashboard(args):
     """Только Dashboard."""

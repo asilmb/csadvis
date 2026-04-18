@@ -1,8 +1,9 @@
 """
 System management endpoints (PV-43).
 
-POST /system/update-cookie  — hot-swap steamLoginSecure, validate, reset FAILED tasks
+POST /system/update-cookie  — hot-swap steamLoginSecure, validate
 GET  /system/cookie-status  — return current cookie status from DB
+GET  /system/queue-status   — return in-process work queue state
 """
 
 from __future__ import annotations
@@ -18,8 +19,12 @@ router = APIRouter(prefix="/system", tags=["system"])
 
 class UpdateCookieRequest(BaseModel):
     value: str
-    session_note: str = ""   # optional description saved to SystemSettings.last_auth_note
-    sessionid: str = ""      # Steam sessionid cookie — required for /myhistory (PV-52)
+    session_note: str = ""
+    sessionid: str = ""
+
+
+class CancelTaskRequest(BaseModel):
+    job_type: str | None = None  # None = drain entire queue
 
 
 class CookieStatusResponse(BaseModel):
@@ -35,22 +40,65 @@ def cookie_status_endpoint() -> CookieStatusResponse:
     return CookieStatusResponse(status=status)
 
 
+@router.get("/queue-status")
+def queue_status_endpoint() -> dict:
+    """Return in-process work queue state for the System Status dashboard."""
+    try:
+        from infra.work_queue import get_worker_state
+        return get_worker_state()
+    except Exception as exc:
+        logger.warning("queue_status: %s", exc)
+        return {"busy": False, "current_type": "", "last_job_at": None, "last_error": str(exc), "restarts": 0, "queue_size": 0}
+
+
+@router.post("/cancel-task")
+async def cancel_task_endpoint(req: CancelTaskRequest) -> dict:
+    """
+    Drain queued jobs matching req.job_type from the in-process work queue.
+    Passing job_type=None drains everything.  The currently-running job is
+    NOT interrupted (asyncio.Queue provides no preemption).
+    """
+    try:
+        import asyncio as _asyncio
+        from infra.work_queue import get_queue
+        q = get_queue()
+        removed = 0
+        kept: list[dict] = []
+        while not q.empty():
+            try:
+                job = q.get_nowait()
+                if req.job_type is None or job.get("type") == req.job_type:
+                    q.task_done()   # consumed (discarded) — balances the get
+                    removed += 1
+                else:
+                    kept.append(job)
+            except _asyncio.QueueEmpty:
+                break
+        for job in kept:
+            try:
+                q.put_nowait(job)
+            except _asyncio.QueueFull:
+                pass
+        logger.info("cancel_task: removed=%d job_type=%r", removed, req.job_type)
+        return {"ok": True, "removed": removed}
+    except Exception as exc:
+        logger.warning("cancel_task: %s", exc)
+        return {"ok": False, "removed": 0, "error": str(exc)}
+
+
 @router.post("/update-cookie")
 def update_cookie_endpoint(req: UpdateCookieRequest) -> dict:
     value = req.value.strip()
     if not value:
         raise HTTPException(status_code=400, detail="Cookie value cannot be empty")
 
-    # SECURITY: cookie value is NEVER logged — only a masked confirmation
     logger.info("Cookie update requested — applying new value (masked: ***)")
 
-    # 1. Persist credentials to Redis
     from infra.steam_credentials import set_login_secure, set_session_id
     set_login_secure(value)
     if req.sessionid.strip():
         set_session_id(req.sessionid.strip())
 
-    # 2. Validate cookie by attempting a wallet sync (sets cookie_status=VALID on success)
     from scrapper.steam_sync import sync_wallet
     result = sync_wallet()
 
@@ -58,7 +106,6 @@ def update_cookie_endpoint(req: UpdateCookieRequest) -> dict:
         logger.warning("Cookie validation failed: error_code=%s", result.error_code)
         return {"ok": False, "error": result.error_code or "VALIDATION_FAILED"}
 
-    # 5. Save session note if provided (never logs the cookie itself)
     if req.session_note.strip():
         try:
             from src.domain.connection import SessionLocal as _SL
@@ -77,28 +124,11 @@ def update_cookie_endpoint(req: UpdateCookieRequest) -> dict:
         except Exception as exc:
             logger.warning("Could not save session note: %s", exc)
 
-    # 6. Reset all FAILED + PAUSED_AUTH tasks to PENDING + release workers
-    from src.domain.connection import SessionLocal
-    from sqlalchemy import text
-    with SessionLocal() as db:
-        reset_count = db.execute(
-            text("UPDATE task_queue SET status='PENDING', retries=0 WHERE status IN ('FAILED', 'PAUSED_AUTH')")
-        ).rowcount
-        # Release workers stuck in BUSY — they will pick up PENDING tasks naturally
-        worker_count = db.execute(
-            text("UPDATE worker_registry SET status='IDLE', current_task_id=NULL WHERE status='BUSY'")
-        ).rowcount
-        db.commit()
-
-    # 7. Clear Redis stealth block so workers resume immediately
     try:
         from infra.redis_client import get_redis as _get_redis
         _get_redis().delete("STEALTH_BLOCK_EXPIRES")
     except Exception as exc:
         logger.warning("Could not clear stealth block: %s", exc)
 
-    logger.info(
-        "Cookie hot-swap successful — %d FAILED tasks reset to PENDING, %d workers released",
-        reset_count, worker_count,
-    )
-    return {"ok": True, "reset_tasks": reset_count, "workers_released": worker_count}
+    logger.info("Cookie hot-swap successful")
+    return {"ok": True, "reset_tasks": 0, "workers_released": 0}

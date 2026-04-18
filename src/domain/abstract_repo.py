@@ -12,7 +12,6 @@ ABCs defined here
                             backward compat with postgres_repo / factory)
   PositionRepository      — position ledger (trade ledger, reconciler)
   PriceRepository         — JIT price read/write (market validator, armory advisor)
-  TaskQueueRepository     — persistent task queue (task manager, Celery tasks)
 
 DTOs defined here (pure value objects, no infrastructure imports)
 -----------------------------------------------------------------
@@ -20,7 +19,6 @@ DTOs defined here (pure value objects, no infrastructure imports)
   PriceDTO                — used by AbstractRepository
   PositionDTO             — used by PositionRepository
   PriceSnapshotDTO        — used by PriceRepository
-  TaskDTO                 — used by TaskQueueRepository
 """
 
 from __future__ import annotations
@@ -108,23 +106,6 @@ class PriceSnapshotDTO:
     container_name: str
     price: float
     timestamp: datetime
-
-
-# ─── Task Queue DTOs ──────────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class TaskDTO:
-    """Immutable task snapshot — safe to pass across layer boundaries."""
-
-    id: str
-    type: str
-    priority: int
-    status: str
-    payload: dict | None
-    retries: int
-    deadline_at: datetime | None
-    created_at: datetime
 
 
 # ─── Legacy abstract interface (retained for backward compat) ─────────────────
@@ -306,88 +287,3 @@ class PriceRepository(ABC):
 
         Returns an empty list when the container is unknown or has no rows.
         """
-
-
-# ─── TaskQueueRepository ─────────────────────────────────────────────────────
-
-
-class TaskQueueRepository(ABC):
-    """
-    Abstract contract for the persistent task queue.
-
-    Deduplication key: (type, payload). A task is a duplicate when an identical
-    row already exists in PENDING, PROCESSING, or RETRY state.
-    Session lifecycle is owned by the caller — commit after mutations.
-    """
-
-    @abstractmethod
-    def enqueue(
-        self,
-        task_type: str,
-        priority: int,
-        payload: dict | None = None,
-    ) -> TaskDTO | None:
-        """
-        Insert a new task.
-
-        Returns None (without inserting) when an identical active task already
-        exists (deduplication by type + payload).  When the duplicate is PENDING
-        with a worse priority number, the existing row is promoted in-place and
-        None is still returned.
-        """
-
-    @abstractmethod
-    def pick_task(self) -> TaskDTO | None:
-        """
-        Atomically claim the highest-priority PENDING or RETRY task.
-
-        Marks the claimed row PROCESSING and returns its DTO.
-        Returns None when the queue is empty.
-        """
-
-    @abstractmethod
-    def complete(self, task_id: str) -> None:
-        """Mark task COMPLETED and stamp completed_at / updated_at. No-ops for unknown ids."""
-
-    @abstractmethod
-    def fail(
-        self,
-        task_id: str,
-        max_retries: int = 3,
-        error_msg: str | None = None,
-    ) -> str:
-        """
-        Increment the retries counter.
-
-        Moves to RETRY when retries < max_retries, otherwise FAILED.
-        Returns the new status string.  Returns "FAILED" for unknown ids.
-        """
-
-    @abstractmethod
-    def pause_auth(self, task_id: str) -> None:
-        """Mark task PAUSED_AUTH — auth loop detected; waits for cookie update."""
-
-    @abstractmethod
-    def requeue_pending(self, task_id: str) -> None:
-        """Reset a task back to PENDING without incrementing the retry counter."""
-
-    @abstractmethod
-    def create_processing(
-        self,
-        task_type: str,
-        payload: dict | None = None,
-        priority: int = 3,
-    ) -> TaskDTO:
-        """
-        Insert a task directly in PROCESSING state (bypasses PENDING→worker flow).
-
-        Used by subsystems that manage their own execution lifecycle.
-        """
-
-    @abstractmethod
-    def update_task_progress(self, task_id: str, progress: dict) -> None:
-        """Merge progress dict into task payload for live UI visibility (best-effort)."""
-
-    @abstractmethod
-    def has_paused_auth_tasks(self) -> bool:
-        """Return True if any task is currently in PAUSED_AUTH state."""

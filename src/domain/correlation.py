@@ -82,14 +82,17 @@ def _resample_pair(
 
 
 def _to_log_returns(prices: list[float]) -> list[float]:
-    """Convert a price series to log-returns: ln(P_t / P_{t-1})."""
-    out: list[float] = []
-    for i in range(1, len(prices)):
-        if prices[i - 1] > 0 and prices[i] > 0:
-            out.append(math.log(prices[i] / prices[i - 1]))
-        else:
-            out.append(0.0)
-    return out
+    """Convert a price series to log-returns: ln(P_t / P_{t-1}).
+
+    Points where either price is zero (bad data / delisted item) are dropped
+    entirely rather than filled with 0.0 — a synthetic zero-return would
+    bias the Pearson r toward zero and mask real correlations.
+    """
+    return [
+        math.log(prices[i] / prices[i - 1])
+        for i in range(1, len(prices))
+        if prices[i - 1] > 0 and prices[i] > 0
+    ]
 
 
 def _pearson(xs: list[float], ys: list[float]) -> float | None:
@@ -197,25 +200,3 @@ def compute_correlation_matrix(
             )
 
     return result
-
-
-def check_portfolio_correlation(
-    flip_name: str | None,
-    invest_name: str | None,
-    pairs: list[tuple[str, str, float]],
-) -> str | None:
-    """
-    Return a warning message if the recommended flip and invest candidates
-    are highly correlated with each other (both would drop in the same scenario).
-    """
-    if not flip_name or not invest_name or flip_name == invest_name:
-        return None
-    for n1, n2, r in pairs:
-        if {n1, n2} == {flip_name, invest_name} and abs(r) >= _HIGH_CORR_THRESHOLD:
-            direction = "положительно" if r > 0 else "отрицательно"
-            return (
-                f"⚠ Флип ({flip_name}) и инвестиция ({invest_name}) "
-                f"{direction} коррелированы (r = {r:+.2f}). "
-                "Оба актива могут упасть одновременно — рассмотри диверсификацию."
-            )
-    return None

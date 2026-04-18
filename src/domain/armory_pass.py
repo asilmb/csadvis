@@ -44,6 +44,8 @@ class ArmoryPassResult:
     margin_pct: ROI              # (net - pass_cost) / pass_cost as ratio; >0 = market better
     recommendation: str          # "MARKET" or "PASS"
     message: str
+    breakeven_listing_price: float  # minimum listing price to recover pass cost after Steam fees
+    sell_signal: str                # "SELL", "WAIT", or "AVOID"
 
 
 def compare_armory_pass(
@@ -105,6 +107,17 @@ def compare_armory_pass(
     effective_float = pass_cost / stars_in_pass * stars_per_case
     net_float = market_price / steam_fee_divisor - steam_fee_fixed
 
+    # Minimum listing price to break even after Steam fees:
+    # net = price / fee_divisor - fee_fixed  =>  price = (net + fee_fixed) * fee_divisor
+    breakeven_listing_price = (effective_float + steam_fee_fixed) * steam_fee_divisor
+
+    if market_price >= breakeven_listing_price:
+        sell_signal = "SELL"
+    elif market_price >= breakeven_listing_price * 0.85:
+        sell_signal = "WAIT"
+    else:
+        sell_signal = "AVOID"
+
     if effective_float == 0:
         # Free pass edge case: market is always strictly better if price > 0
         margin_ratio = float("inf") if net_float > 0 else 0.0
@@ -135,4 +148,6 @@ def compare_armory_pass(
         margin_pct=ROI(margin_ratio),
         recommendation=recommendation,
         message=message,
+        breakeven_listing_price=breakeven_listing_price,
+        sell_signal=sell_signal,
     )

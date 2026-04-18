@@ -28,7 +28,7 @@ from ui.helpers import (
 
 logger = logging.getLogger(__name__)
 
-_VERSION = "2.1.0"  # bump this to confirm new code is running
+_VERSION = "2.3.0"  # bump this to confirm new code is running
 
 # ─── Design token aliases (kept here for layout code) ──────────────────────────
 _BG_WARN = "#3d2b00"  # stale calendar warning background (not in theme)
@@ -173,7 +173,7 @@ def create_dash_app() -> dash.Dash:
                             # Lightweight Redis poller — only reads one key, no DB
                             dcc.Interval(id="task-poll-interval", interval=2_000, n_intervals=0),
                             # Hidden stubs — callbacks write to these; UI no longer shows them
-                            html.Div(id="btn-sync-all", style={"display": "none"}),
+                            dbc.Button(id="btn-sync-all", style={"display": "none"}),
                             html.Div(id="last-sync-indicator", style={"display": "none"}),
                             # UX-13: sync state store (idle/loading/done-ok/done-partial/done-error)
                             dcc.Store(id="sync-state", data={"ts": None, "status": "idle"}),
@@ -259,23 +259,30 @@ def create_dash_app() -> dash.Dash:
                 ],
                 style={"margin": "0"},
             ),
-            # ── Global toast ────────────────────────────────────────────────
+            # ── Notification bus (hidden) — callbacks still write here; ────────
+            # ── aggregator picks it up and pushes to toast-store.       ────────
             dbc.Toast(
                 id="app-toast",
                 header="",
                 is_open=False,
-                dismissable=True,
+                dismissable=False,
                 duration=4000,
+                style={"display": "none"},
+            ),
+            # ── Notification store — max 5 entries, oldest dropped ──────────────
+            dcc.Store(id="toast-store", data=[]),
+            # ── Visible stacked toasts — rendered from toast-store ──────────────
+            html.Div(
+                id="toast-stack-container",
                 style={
                     "position": "fixed",
                     "top": "20px",
                     "right": "20px",
-                    "width": "320px",
                     "zIndex": 9999,
-                    "backgroundColor": _BG2,
-                    "border": f"1px solid {_BORDER}",
-                    "color": _TEXT,
-                    "fontSize": "13px",
+                    "display": "flex",
+                    "flexDirection": "column",
+                    "gap": "8px",
+                    "width": "320px",
                 },
             ),
             # Cookie status polling — 30s interval

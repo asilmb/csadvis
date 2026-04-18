@@ -53,13 +53,6 @@ def cmd_init(args) -> None:
     init_db()
     print("OK")
 
-    from sqlalchemy import text as _text
-
-    with SessionLocal() as db:
-        db.execute(_text("DELETE FROM worker_registry"))
-        db.commit()
-    print("[init] WorkerRegistry cleared")
-
     print("[INIT] seed_database ... ", end="", flush=True)
     with SessionLocal() as db:
         seed_database(db)
@@ -157,8 +150,6 @@ def cmd_clean(args) -> None:
       * config.py
       * Any *.db file whose name does not start with "test_"
 
-    DB-side:
-      * WorkerRegistry rows are cleared (phantom workers from past sessions).
     """
     import shutil
 
@@ -199,24 +190,9 @@ def cmd_clean(args) -> None:
         f.unlink(missing_ok=True)
         removed_files.append(str(f.relative_to(root)))
 
-    # ── WorkerRegistry reset ──────────────────────────────────────────────────
-    workers_reset = 0
-    try:
-        from src.domain.connection import SessionLocal, init_db
-
-        init_db()
-        from src.domain.models import WorkerRegistry
-
-        with SessionLocal() as db:
-            workers_reset = db.query(WorkerRegistry).delete(synchronize_session=False)
-            db.commit()
-    except Exception as exc:
-        logger.warning("clean: could not reset WorkerRegistry: %s", exc)
-
     # ── Report ────────────────────────────────────────────────────────────────
     print(f"[CLEAN] Cache dirs removed:   {len(removed_dirs)}")
     print(f"[CLEAN] Files removed:        {len(removed_files)}")
-    print(f"[CLEAN] WorkerRegistry rows:  {workers_reset} cleared")
     if removed_dirs:
         for d in removed_dirs[:10]:
             print(f"         dir  {d}")

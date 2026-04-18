@@ -9,8 +9,6 @@ Tables:
   fact_transactions        — manual trade log (buy/sell history)
   dim_annual_summary       — yearly P&L summary (manual input)
   event_log                — domain event audit log (PV-17)
-  task_queue               — persistent background task queue (PV-25)
-  worker_registry          — worker heartbeat / status registry (PV-28)
   positions                — inventory position ledger with asset_id (PV-31)
   dim_deals                — flip trade lifecycle tracker (entry → unlock → sold/stopped)
   dim_banned_assets        — dead assets excluded from future scans
@@ -33,7 +31,6 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy import JSON
 from sqlalchemy.orm import DeclarativeBase, relationship
 
 
@@ -269,9 +266,6 @@ class DimBannedAsset(Base):
         return f"<DimBannedAsset container={self.container_id} reason={self.reason!r} by={self.banned_by!r}>"
 
 
-# ─── Phase 4 — Infrastructure & Reliability ───────────────────────────────────
-
-
 class EventLog(Base):
     """Domain event audit log — written by SignalHandler (PV-17)."""
 
@@ -290,58 +284,6 @@ class EventLog(Base):
 
     def __repr__(self) -> str:
         return f"<EventLog {self.timestamp} [{self.level}] {self.module}: {self.message[:60]}>"
-
-
-class TaskStatus(StrEnum):
-    PENDING = "PENDING"
-    PROCESSING = "PROCESSING"
-    RETRY = "RETRY"
-    FAILED = "FAILED"
-    COMPLETED = "COMPLETED"
-    PAUSED_AUTH = "PAUSED_AUTH"
-
-
-class TaskQueue(Base):
-    """Persistent background task queue — survives process restarts (PV-25)."""
-
-    __tablename__ = "task_queue"
-
-    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    type = Column(String(100), nullable=False)       # task type name, e.g. "price_poll"
-    priority = Column(Integer, nullable=False, default=5)  # lower value = higher priority
-    status = Column(
-        Enum(TaskStatus), nullable=False, default=TaskStatus.PENDING, index=True
-    )
-    payload = Column(JSON, nullable=True)            # arbitrary task parameters
-    retries = Column(Integer, nullable=False, default=0)
-    deadline_at = Column(DateTime, nullable=True)    # None = no deadline
-    created_at = Column(
-        DateTime,
-        nullable=False,
-        default=lambda: datetime.now(UTC).replace(tzinfo=None),
-    )
-    updated_at = Column(DateTime, nullable=True)     # set on every status transition
-    completed_at = Column(DateTime, nullable=True)   # set when status → COMPLETED
-    error_message = Column(Text, nullable=True)      # last error from fail()
-
-    __table_args__ = (Index("ix_task_queue_status_priority", "status", "priority"),)
-
-    def __repr__(self) -> str:
-        return f"<TaskQueue {self.type!r} [{self.status}] priority={self.priority}>"
-
-
-class WorkerRegistry(Base):
-    """Worker heartbeat and status registry — one row per named worker (PV-28)."""
-
-    __tablename__ = "worker_registry"
-
-    name = Column(String(100), primary_key=True)    # e.g. "price_poller", "backfill"
-    status = Column(String(20), nullable=False, default="IDLE", index=True)  # IDLE/BUSY/DEAD
-    last_heartbeat = Column(DateTime, nullable=True)
-    current_task_id = Column(String(36), nullable=True)  # FK-free; task may be deleted
-
-    def __repr__(self) -> str:
-        return f"<WorkerRegistry {self.name!r} [{self.status}]>"
 
 
 class PositionStatus(StrEnum):

@@ -1,16 +1,14 @@
 """
 Database Garbage Collector (PV-26).
 
-MaintenanceService.run_all() performs three steps in order:
-  1. cleanup_task_queue() — delete COMPLETED/FAILED tasks older than 24 h.
-  2. cleanup_event_log()  — delete EventLog rows older than 7 days, but
+MaintenanceService.run_all() performs two steps in order:
+  1. cleanup_event_log()  — delete EventLog rows older than 7 days, but
        retain ERROR/CRITICAL rows within the last 48 h so that recent
        auth failures and exceptions remain visible for debugging.
-  3. vacuum()             — VACUUM on a dedicated connection, outside any
-       transaction (SQLite forbids VACUUM inside a transaction).
+  2. vacuum()             — VACUUM on a dedicated connection, outside any
+       transaction.
 
-Designed to run periodically via a "db_maintenance" TaskQueue entry or
-manually via `cs2 db cleanup`.
+Run manually via `cs2 db cleanup`.
 """
 
 from __future__ import annotations
@@ -28,51 +26,16 @@ logger = logging.getLogger(__name__)
 class CleanupResult:
     """Immutable summary returned by run_all()."""
 
-    tasks_deleted: int
     events_deleted: int
 
 
 class MaintenanceService:
     """Stateless garbage-collector — safe to instantiate per-call."""
 
-    # Defaults used by run_all(); individual methods accept override args for testing.
-    _TASK_RETENTION_H: int = 24
     _EVENT_RETENTION_D: int = 7
     _ERROR_PROTECT_H: int = 48
 
     # ── public API ─────────────────────────────────────────────────────────────
-
-    def cleanup_task_queue(self, older_than_hours: int = _TASK_RETENTION_H) -> int:
-        """
-        Delete COMPLETED and FAILED tasks created more than older_than_hours ago.
-
-        PENDING / PROCESSING / RETRY tasks are never touched — they are live
-        work that must not be lost.
-
-        Returns the number of deleted rows.
-        """
-        from src.domain.connection import SessionLocal
-        from src.domain.models import TaskQueue, TaskStatus
-
-        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=older_than_hours)
-
-        with SessionLocal() as db:
-            deleted = (
-                db.query(TaskQueue)
-                .filter(
-                    TaskQueue.status.in_([TaskStatus.COMPLETED, TaskStatus.FAILED]),
-                    TaskQueue.created_at < cutoff,
-                )
-                .delete(synchronize_session=False)
-            )
-            db.commit()
-
-        logger.info(
-            "maintenance: deleted %d terminal task(s) older than %dh",
-            deleted,
-            older_than_hours,
-        )
-        return deleted
 
     def cleanup_event_log(
         self,
@@ -142,22 +105,17 @@ class MaintenanceService:
 
     def run_all(
         self,
-        task_retention_h: int = _TASK_RETENTION_H,
         event_retention_d: int = _EVENT_RETENTION_D,
         protect_errors_h: int = _ERROR_PROTECT_H,
     ) -> CleanupResult:
         """
-        Full maintenance cycle: task cleanup → event log cleanup → VACUUM.
-
-        Parameters are passed through to the individual methods so callers
-        (tests, CLI) can override the defaults without subclassing.
+        Full maintenance cycle: event log cleanup → VACUUM.
 
         Returns a CleanupResult with the total rows deleted.
         """
-        tasks = self.cleanup_task_queue(older_than_hours=task_retention_h)
         events = self.cleanup_event_log(
             older_than_days=event_retention_d,
             protect_errors_hours=protect_errors_h,
         )
         self.vacuum()
-        return CleanupResult(tasks_deleted=tasks, events_deleted=events)
+        return CleanupResult(events_deleted=events)

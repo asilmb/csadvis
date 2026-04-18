@@ -7,7 +7,7 @@ Callers own the Session lifecycle (open / commit / close).
 Concrete classes inherit from the ABCs defined in abstract_repo.py:
   SqlAlchemyPositionRepository  → PositionRepository
   SqlAlchemyPriceRepository     → PriceRepository
-  SqlAlchemyTaskQueueRepository → TaskQueueRepository
+  (TaskQueueRepository removed — replaced by in-process asyncio.Queue)
   SqlAlchemyInventoryRepository → InventoryRepository  (repositories.py)
 
 DTOs are defined in abstract_repo.py and re-exported here for backward
@@ -27,22 +27,16 @@ from src.domain.abstract_repo import (
     PositionRepository,
     PriceRepository,
     PriceSnapshotDTO,
-    TaskDTO,
-    TaskQueueRepository,
 )
 from src.domain.repositories import InventoryRepository
 from src.domain.value_objects import Amount
 
-# Re-export DTOs so that existing `from src.domain.sql_repositories import XxxDTO`
-# imports continue to resolve without modification.
 __all__ = [
     "PositionDTO",
     "PriceSnapshotDTO",
-    "TaskDTO",
     "SqlAlchemyInventoryRepository",
     "SqlAlchemyPositionRepository",
     "SqlAlchemyPriceRepository",
-    "SqlAlchemyTaskQueueRepository",
     "get_cookie_status",
     "set_cookie_status",
 ]
@@ -528,207 +522,6 @@ class SqlAlchemyPriceRepository(PriceRepository):
 
 
 # ─── Task Queue Repository ────────────────────────────────────────────────────
-
-
-class SqlAlchemyTaskQueueRepository(TaskQueueRepository):
-    """
-    CRUD repository for the persistent task queue.
-
-    Session lifecycle is owned by the caller — call db.commit() after mutations.
-
-    Deduplication key: (type, payload). A task is a duplicate when an identical
-    row already exists in PENDING or PROCESSING state.
-    """
-
-    def __init__(self, db: Session) -> None:
-        self._db = db
-
-    # ── internal helpers ───────────────────────────────────────────────────────
-
-    def _to_dto(self, row) -> TaskDTO:  # type: ignore[return]
-        return TaskDTO(
-            id=str(row.id),
-            type=str(row.type),
-            priority=int(row.priority),
-            status=str(row.status),
-            payload=row.payload,
-            retries=int(row.retries),
-            deadline_at=row.deadline_at,
-            created_at=row.created_at,
-        )
-
-    # ── public API ─────────────────────────────────────────────────────────────
-
-    def enqueue(
-        self,
-        task_type: str,
-        priority: int,
-        payload: dict | None = None,
-    ) -> TaskDTO | None:
-        """
-        Insert a new task.  Returns None (without inserting) when an identical
-        active task already exists (deduplication by type + payload).
-
-        Deduplication scope: PENDING, PROCESSING, RETRY.
-        Priority upsert: if the duplicate is PENDING with a worse (higher) priority
-        number than the incoming request, the existing row is promoted in-place.
-        Returns None in both cases — the caller receives no new DTO.
-        """
-        from src.domain.models import TaskQueue, TaskStatus
-
-        active = (
-            self._db.query(TaskQueue)
-            .filter(
-                TaskQueue.type == task_type,
-                TaskQueue.status.in_(
-                    [TaskStatus.PENDING, TaskStatus.PROCESSING, TaskStatus.RETRY]
-                ),
-            )
-            .all()
-        )
-        for row in active:
-            if row.payload == payload:
-                # Upgrade priority on PENDING duplicates (lower number = higher urgency)
-                if row.status == TaskStatus.PENDING and row.priority > priority:
-                    row.priority = priority
-                    row.updated_at = datetime.now(UTC).replace(tzinfo=None)
-                return None  # deduplicated — no new row
-
-        row = TaskQueue(type=task_type, priority=priority, payload=payload)
-        self._db.add(row)
-        return self._to_dto(row)
-
-    def pick_task(self) -> TaskDTO | None:
-        """
-        Atomically claim the highest-priority PENDING or RETRY task.
-
-        Uses a single UPDATE … WHERE id = (SELECT … LIMIT 1) RETURNING * so
-        that concurrent workers can never pick the same row twice (no TOCTOU).
-        """
-        import json
-
-        import sqlalchemy
-
-        result = self._db.execute(
-            sqlalchemy.text(
-                """
-                UPDATE task_queue
-                SET status = 'PROCESSING',
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = (
-                    SELECT id FROM task_queue
-                    WHERE status IN ('PENDING', 'RETRY')
-                    ORDER BY priority ASC, created_at ASC
-                    LIMIT 1
-                )
-                RETURNING id, type, priority, status, payload, retries,
-                          deadline_at, created_at
-                """
-            )
-        )
-        row = result.fetchone()
-        if row is None:
-            return None
-        m = row._mapping
-        raw_payload = m["payload"]
-        payload = json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload
-        return TaskDTO(
-            id=str(m["id"]),
-            type=str(m["type"]),
-            priority=int(m["priority"]),
-            status=str(m["status"]),
-            payload=payload,
-            retries=int(m["retries"]),
-            deadline_at=m["deadline_at"],
-            created_at=m["created_at"],
-        )
-
-    def complete(self, task_id: str) -> None:
-        """Mark task COMPLETED and stamp completed_at / updated_at."""
-        from src.domain.models import TaskQueue, TaskStatus
-
-        now = datetime.now(UTC).replace(tzinfo=None)
-        row = self._db.query(TaskQueue).filter(TaskQueue.id == task_id).first()
-        if row is not None:
-            row.status = TaskStatus.COMPLETED
-            row.completed_at = now
-            row.updated_at = now
-
-    def fail(self, task_id: str, max_retries: int = 3, error_msg: str | None = None) -> str:
-        """
-        Increment retries counter.  Moves to RETRY when retries < max_retries,
-        otherwise FAILED.  Returns the new status string.
-        """
-        from src.domain.models import TaskQueue, TaskStatus
-
-        now = datetime.now(UTC).replace(tzinfo=None)
-        row = self._db.query(TaskQueue).filter(TaskQueue.id == task_id).first()
-        if row is None:
-            return str(TaskStatus.FAILED)
-        row.retries = (row.retries or 0) + 1
-        row.status = TaskStatus.RETRY if row.retries < max_retries else TaskStatus.FAILED
-        row.updated_at = now
-        if error_msg:
-            row.error_message = error_msg[:500]  # truncate to column length
-        return str(row.status)
-
-    def pause_auth(self, task_id: str) -> None:
-        """Mark task PAUSED_AUTH — auth loop detected; task waits for cookie update."""
-        from src.domain.models import TaskQueue, TaskStatus
-
-        row = self._db.query(TaskQueue).filter(TaskQueue.id == task_id).first()
-        if row is not None:
-            row.status = TaskStatus.PAUSED_AUTH
-            row.updated_at = datetime.now(UTC).replace(tzinfo=None)
-
-    def requeue_pending(self, task_id: str) -> None:
-        """Reset a task back to PENDING without incrementing the retry counter (network backoff)."""
-        from src.domain.models import TaskQueue, TaskStatus
-
-        row = self._db.query(TaskQueue).filter(TaskQueue.id == task_id).first()
-        if row is not None:
-            row.status = TaskStatus.PENDING
-            row.updated_at = datetime.now(UTC).replace(tzinfo=None)
-
-    def create_processing(
-        self, task_type: str, payload: dict | None = None, priority: int = 3
-    ) -> TaskDTO:
-        """
-        Insert a task directly in PROCESSING state (bypasses PENDING→worker flow).
-
-        Used by subsystems that manage their own execution lifecycle (e.g. scraper)
-        and only need the task_queue row for UI visibility.  Workers do not pick
-        PROCESSING tasks — they only claim PENDING/RETRY rows.
-        """
-        import json as _json
-
-        from src.domain.models import TaskQueue, TaskStatus
-
-        row = TaskQueue(type=task_type, priority=priority, payload=payload)
-        row.status = TaskStatus.PROCESSING
-        self._db.add(row)
-        return self._to_dto(row)
-
-    def update_task_progress(self, task_id: str, progress: dict) -> None:
-        """Merge progress dict into task payload for live UI visibility (best-effort)."""
-        from src.domain.models import TaskQueue
-
-        row = self._db.query(TaskQueue).filter(TaskQueue.id == task_id).first()
-        if row is not None:
-            current = dict(row.payload or {})
-            current.update(progress)
-            row.payload = current
-            row.updated_at = datetime.now(UTC).replace(tzinfo=None)
-
-    def has_paused_auth_tasks(self) -> bool:
-        """Return True if any task is currently in PAUSED_AUTH state."""
-        from src.domain.models import TaskQueue, TaskStatus
-
-        return (
-            self._db.query(TaskQueue)
-            .filter(TaskQueue.status == TaskStatus.PAUSED_AUTH)
-            .first()
-        ) is not None
 
 
 # ─── Cookie status (PV-43) ────────────────────────────────────────────────────

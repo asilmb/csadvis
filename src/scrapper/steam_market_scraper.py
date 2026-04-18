@@ -5,26 +5,30 @@ Discovers all weapon cases, souvenir packages, and sticker/autograph/event
 capsules by querying the Steam Market Search JSON endpoint directly.
 
 No HTML parsing required — the API returns structured JSON with item tags.
-Rate-limited to 1 request per 1.5 seconds to avoid Steam bans.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import urllib.parse
 from dataclasses import dataclass, field
 
-import httpx
+from curl_cffi.requests import AsyncSession
+
+from scrapper.steam.client import _is_emergency_blocked, _trigger_emergency_stop
+
+# Chromium profile — must match SteamMarketClient._IMPERSONATE so both clients
+# produce identical TLS fingerprints from the same IP.
+_IMPERSONATE = "chrome131"
 
 STEAM_HEADERS: dict[str, str] = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/122.0.0.0 Safari/537.36"
-    ),
+    # Sec-Ch-Ua / Sec-Fetch-* are injected by curl_cffi impersonation;
+    # these overlay Steam-specific headers that curl_cffi does not set.
     "Referer": "https://steamcommunity.com/market/",
     "X-Requested-With": "XMLHttpRequest",
+    "Accept": "application/json",
 }
 
 logger = logging.getLogger(__name__)
@@ -34,7 +38,6 @@ _LISTING_BASE = "https://steamcommunity.com/market/listings/730/"
 _APP_ID = 730
 _PAGE_SIZE = 100
 _TIMEOUT = 45.0  # PV-68: EU servers need more time
-_RETRY_SLEEP = 60.0  # seconds to wait after a 429 (before re-acquiring a token)
 
 # Steam Market Type tag → raw container type string
 _TAG_TO_CTYPE: dict[str, str] = {
@@ -124,7 +127,7 @@ def _build_search_url(type_tag: str, start: int) -> str:
 
 
 async def _fetch_page(
-    client: httpx.AsyncClient,
+    client: AsyncSession,
     type_tag: str,
     start: int,
 ) -> dict | None:
@@ -132,20 +135,25 @@ async def _fetch_page(
     Fetch one page of Steam Market search results for a given type tag.
 
     Returns parsed JSON dict on success, None on error.
+    Respects the global emergency stop — skips request if a 429 block is active.
     """
+    if _is_emergency_blocked():
+        logger.debug("[SCRAPER] skipped tag=%s start=%d — emergency stop active", type_tag, start)
+        return None
+
     url = _build_search_url(type_tag, start)
 
     try:
-        await asyncio.sleep(4.0)  # simple rate limit: ~15 req/min
-        resp = await client.get(url)
+        await asyncio.sleep(random.uniform(3.2, 7.1))  # jittered delay — less detectable than fixed
+        resp = await client.get(url, timeout=_TIMEOUT)
 
         if resp.status_code == 429:
             logger.warning(
-                "[SCRAPER] 429 on tag=%s start=%d — waiting %.0fs before retry",
-                type_tag, start, _RETRY_SLEEP,
+                "[SCRAPER] 429 on tag=%s start=%d — activating emergency stop",
+                type_tag, start,
             )
-            await asyncio.sleep(_RETRY_SLEEP)
-            resp = await client.get(url)
+            _trigger_emergency_stop(f"scraper:{type_tag}", attempt=0)
+            return None
 
         if resp.status_code != 200:
             logger.warning(
@@ -163,7 +171,7 @@ async def _fetch_page(
 # ─── Public API ────────────────────────────────────────────────────────────────
 
 
-async def scrape_all_containers(task_id: str | None = None) -> list[ScrapedContainer]:
+async def scrape_all_containers() -> list[ScrapedContainer]:
     """
     Discover all CS2 weapon cases, souvenir packages, and capsules from
     the Steam Community Market Search API.
@@ -172,34 +180,16 @@ async def scrape_all_containers(task_id: str | None = None) -> list[ScrapedConta
     container are not fetched (items=[] always) — db_writer only needs
     container-level metadata.
     """
-    headers = {**STEAM_HEADERS, "Accept": "application/json"}
+    headers = STEAM_HEADERS  # Accept already included in STEAM_HEADERS
 
     containers: list[ScrapedContainer] = []
     seen_names: set[str] = set()
 
-    async def _report(msg: str) -> None:
-        """Push progress string to task_queue payload (best-effort, non-blocking)."""
-        if not task_id:
-            return
-        try:
-            from infra.task_manager import TaskQueueService
-            await asyncio.to_thread(
-                TaskQueueService().update_task_progress, task_id, {"_progress": msg}
-            )
-        except Exception:
-            pass
-
-    async with httpx.AsyncClient(
-        headers=headers,
-        timeout=httpx.Timeout(_TIMEOUT),
-        limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
-        follow_redirects=True,
-    ) as client:
+    async with AsyncSession(impersonate=_IMPERSONATE, headers=headers) as client:
         n_tags = len(_QUERY_TAGS)
         for tag_idx, type_tag in enumerate(_QUERY_TAGS, start=1):
             raw_ctype = _TAG_TO_CTYPE[type_tag]
-            logger.info("[SCRAPER] Querying Steam Market for tag=%s", type_tag)
-            await _report(f"Scraping: {raw_ctype} (tag {tag_idx}/{n_tags})")
+            logger.info("[SCRAPER] Querying Steam Market for tag=%s (%d/%d)", type_tag, tag_idx, n_tags)
 
             start = 0
             total_count: int | None = None

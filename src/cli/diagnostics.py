@@ -350,190 +350,66 @@ def cmd_status(args) -> None:
 
 
 def cmd_monitor(args) -> None:
-    """Display Worker Registry + Task Queue statistics."""
-    from src.domain.connection import SessionLocal, init_db
-    from src.domain.models import TaskQueue, TaskStatus, WorkerRegistry
+    """Display work queue state via the API /system/queue-status endpoint."""
+    import json
+    import urllib.request
 
-    init_db()
+    from config import settings
 
-    with SessionLocal() as db:
-        workers = db.query(WorkerRegistry).order_by(WorkerRegistry.name).all()
-        queue_counts = (
-            db.query(TaskQueue.status, TaskQueue.status)
-            .all()  # fetch all statuses for manual grouping
-        )
-        _ = queue_counts  # unused — we query per-status below
-
-        counts: dict[str, int] = {}
-        for st in TaskStatus:
-            counts[str(st)] = db.query(TaskQueue).filter(TaskQueue.status == st).count()
-
-        oldest = (
-            db.query(TaskQueue)
-            .filter(TaskQueue.status.in_([TaskStatus.PENDING, TaskStatus.RETRY]))
-            .order_by(TaskQueue.priority.asc(), TaskQueue.created_at.asc())
-            .limit(5)
-            .all()
-        )
-
-    # ── Worker Registry ───────────────────────────────────────────────────────
-    W = (16, 12, 18, 36)  # col widths: name, status, heartbeat, task_id
-    _SEP = "  " + "─" * (sum(W) + len(W) * 2)
+    url = f"http://{settings.api_internal_host}:{settings.api_port}/api/v1/system/queue-status"
     print()
-    print("  Worker Registry")
-    print(_SEP)
-    print(
-        f"  {'Name':<{W[0]}}  {'Status':<{W[1]}}  {'Last Heartbeat':<{W[2]}}  {'Active Task':<{W[3]}}"
-    )
-    print(_SEP)
-    if not workers:
-        print("  (no workers registered)")
-    for w in workers:
-        task_cell = _trunc(w.current_task_id or "—", W[3])
-        print(
-            f"  {_trunc(w.name, W[0]):<{W[0]}}"
-            f"  {_trunc(w.status, W[1]):<{W[1]}}"
-            f"  {_fmt_age(w.last_heartbeat):<{W[2]}}"
-            f"  {task_cell:<{W[3]}}"
-        )
-    print(_SEP)
-
-    # ── Task Queue ────────────────────────────────────────────────────────────
-    Q = (14, 8)  # status, count
-    _QSEP = "  " + "─" * (sum(Q) + 2)
-    print()
-    print("  Task Queue — Status Summary")
-    print(_QSEP)
-    print(f"  {'Status':<{Q[0]}}  {'Count':>{Q[1]}}")
-    print(_QSEP)
-    for st_name, count in counts.items():
-        print(f"  {st_name:<{Q[0]}}  {count:>{Q[1]}}")
-    print(_QSEP)
-
-    # ── Oldest active tasks ───────────────────────────────────────────────────
-    if oldest:
-        T = (8, 20, 10, 14, 8)  # id(short), type, priority, age, retries
-        _TSEP = "  " + "─" * (sum(T) + len(T) * 2)
-        print()
-        print("  Oldest PENDING / RETRY tasks (top 5)")
-        print(_TSEP)
-        print(
-            f"  {'ID':>{T[0]}}"
-            f"  {'Type':<{T[1]}}"
-            f"  {'Priority':>{T[2]}}"
-            f"  {'Age':<{T[3]}}"
-            f"  {'Retries':>{T[4]}}"
-        )
-        print(_TSEP)
-        for t in oldest:
-            short_id = str(t.id)[:8]
-            print(
-                f"  {short_id:>{T[0]}}"
-                f"  {_trunc(str(t.type), T[1]):<{T[1]}}"
-                f"  {t.priority:>{T[2]}}"
-                f"  {_fmt_age(t.created_at):<{T[3]}}"
-                f"  {t.retries:>{T[4]}}"
-            )
-        print(_TSEP)
+    print("  In-Process Work Queue")
+    print("  " + "─" * 42)
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            state = json.loads(resp.read())
+        print(f"  Busy        : {'yes' if state.get('busy') else 'no'}")
+        print(f"  Current job : {state.get('current_type') or '—'}")
+        print(f"  Queue size  : {state.get('queue_size', 0)}")
+        print(f"  Last job at : {state.get('last_job_at') or 'never'}")
+        print(f"  Restarts    : {state.get('restarts', 0)}")
+        if state.get('last_error'):
+            print(f"  Last error  : {state['last_error']}")
+    except Exception as exc:
+        print(f"  [ERROR] Could not reach API: {exc}")
+        print(f"  Make sure the API server is running (python src/main.py api)")
     print()
 
 
 def cmd_validate_top(args) -> None:
-    """
-    Enqueue an on-demand JIT validation task for the current top-N flip candidates.
-
-    Reads top_flips from the latest FactPortfolioAdvice row, extracts up to
-    --top names (default 3), and enqueues a HIGH-priority "market_validation"
-    task.  Then polls the TaskQueue for up to --timeout seconds and prints the
-    final status.
-
-    Requires workers to be running (cs2 start) to process the task.
-    """
-    import time
-
-    from src.domain.connection import SessionLocal, init_db
-    from src.domain.models import TaskQueue
-    from src.domain.portfolio import get_latest_advice
-    from infra.task_manager import TaskQueueService
+    """Validate top-N flip candidates against live Steam Market API prices."""
+    import asyncio
+    from src.domain.connection import init_db
+    from src.domain.investment import compute_all_investment_signals
+    from scrapper.steam.client import SteamMarketClient
 
     top_n: int = args.top
-    timeout: int = args.timeout
 
-    init_db()
-
-    advice = get_latest_advice()
-    top_flips: list[dict] = advice.get("top_flips") or [] if advice else []
-    if not top_flips:
-        print(
-            "[WARN] No top flip candidates found in DB. "
-            "Run cs2 start (or cs2 scrape + portfolio refresh) first."
-        )
-        sys.exit(0)
-
-    names = [str(f["name"]) for f in top_flips[:top_n] if f.get("name")]
-    if not names:
-        print("[WARN] top_flips entries have no 'name' field — cannot validate.")
+    try:
+        client = SteamMarketClient()
+    except RuntimeError as exc:
+        print(f"[ERROR] {exc}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"\n  Validate-Top — enqueueing {len(names)} candidate(s) at HIGH priority:")
-    for i, n in enumerate(names, 1):
-        print(f"    {i}. {n}")
-    print()
+    init_db()
+    print("Loading container data from DB ...", flush=True)
+    containers, price_data = _vp_load_db_data()
+    print(f"  Loaded {len(containers)} containers.", flush=True)
 
-    svc = TaskQueueService()
-    dto = svc.enqueue("market_validation", priority=1, payload={"names": names})
-    if dto is None:
-        print(
-            "  [INFO] Identical market_validation task already PENDING / PROCESSING — "
-            "no duplicate enqueued."
-        )
+    signals = compute_all_investment_signals(containers, price_data)
+    top = _vp_select_top_n(containers, price_data, signals, top_n)
+
+    if not top:
+        print("[WARN] No containers with price data found. Run cs2 scrape && cs2 backfill first.")
         sys.exit(0)
 
-    task_id = dto.id
-    print(f"  Task enqueued: {task_id}")
-    print(f"  Waiting up to {timeout}s for completion ...\n")
-
-    deadline = time.monotonic() + timeout
-    status = "PENDING"
-    while time.monotonic() < deadline:
-        with SessionLocal() as db:
-            row = db.query(TaskQueue).filter(TaskQueue.id == task_id).first()
-        if row is None:
-            print("  [ERROR] Task disappeared from queue — unexpected state.")
-            sys.exit(1)
-        status = str(row.status)
-        if status in ("COMPLETED", "FAILED"):
-            print(f"  Task {task_id[:8]}… → {status}")
-            print()
-            sys.exit(0 if status == "COMPLETED" else 1)
-        time.sleep(2)
-
-    print(f"  [TIMEOUT] Task {task_id[:8]}… still in status {status!r} after {timeout}s.")
-    print("  Workers may not be running. Use `cs2 monitor` to check queue state.")
-    print()
+    print(f"\nSelected top-{len(top)} containers by signal score. Querying Steam Market API ...\n", flush=True)
+    names = [str(c.container_name) for c, _ in top]
+    api_results = asyncio.run(_vp_fetch_prices(client, names))
+    _vp_print_report(top, api_results)
 
 
 def cmd_watchdog(args) -> None:
-    """
-    Run the stuck-task watchdog once.
-
-    Finds workers with stale heartbeats (> 90s) whose PROCESSING tasks have
-    exceeded the per-type TTL.  Reclaimed tasks are reset to PENDING.
-    """
-    from src.domain.connection import init_db
-    from infra.task_manager import TASK_TTL, WORKER_STUCK_THRESHOLD_S, TaskQueueService
-
-    init_db()
-
-    print(
-        f"\n  Watchdog — stuck threshold: {WORKER_STUCK_THRESHOLD_S}s"
-        f" | task TTLs: {TASK_TTL}\n"
-    )
-
-    svc = TaskQueueService()
-    n = svc.reclaim_stuck_tasks()
-
-    if n == 0:
-        print("  No stuck tasks found.\n")
-    else:
-        print(f"  Reclaimed {n} task(s) → reset to PENDING.\n")
+    """Watchdog is no longer needed — the in-process worker self-supervises."""
+    print("\n  Watchdog: not applicable — in-process worker has a built-in supervisor.")
+    print("  Use `cs2 monitor` to check queue state.\n")

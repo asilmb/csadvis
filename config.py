@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     api_host: str = "0.0.0.0"
     api_port: int = 8000
+    api_internal_host: str = "api"  # Docker service name; override to "localhost" for local dev
     dashboard_port: int = 8050
 
     # Display currency

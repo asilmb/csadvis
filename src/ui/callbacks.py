@@ -25,6 +25,7 @@ from ui.helpers import (
     _BG3,
     _BG_SEL,
     _BLUE,
+    _BORDER,
     _FEE_DIV,
     _FEE_FIXED,
     _GREEN,
@@ -50,6 +51,46 @@ def _render_balance_tab(wallet_balance: Any, inventory_data: Any) -> html.Div:
     from ui.balance import render_balance
 
     return render_balance(wallet_balance, inventory_data)
+
+
+def _get_system_health():
+    """Fetch system health snapshot for the Status tab (calls API + DB)."""
+    import requests as _req
+    from config import settings as _s
+    from infra.steam_credentials import get_login_secure
+
+    worker_state: dict = {}
+    try:
+        r = _req.get(
+            f"http://{_s.api_internal_host}:{_s.api_port}/api/v1/system/queue-status",
+            timeout=3,
+        )
+        worker_state = r.json() if r.ok else {}
+    except Exception:
+        pass
+
+    from src.domain.models import DimContainer
+    from src.domain.connection import SessionLocal
+    blacklisted = []
+    try:
+        with SessionLocal() as db:
+            bl = db.query(DimContainer).filter(DimContainer.is_blacklisted == 1).all()
+            blacklisted = [{"container_id": str(c.container_id), "container_name": c.container_name} for c in bl]
+    except Exception:
+        pass
+
+    from datetime import UTC, datetime
+
+    class _Health:
+        cookie_set = bool(get_login_secure())
+        tokens = None
+        token_level = "N/A"
+        circuit_open = False
+        blacklisted_containers = blacklisted
+        timestamp = datetime.now(UTC).strftime("%H:%M:%S")
+        worker = worker_state
+
+    return _Health()
 
 
 def register_callbacks(app: Any) -> None:
@@ -173,35 +214,70 @@ def register_callbacks(app: Any) -> None:
             if ev_badge:
                 badge_els.append(ev_badge)
 
+            is_blacklisted = getattr(c, "is_blacklisted", False)
+            _btn_base = {
+                "background": "none", "border": "none", "cursor": "pointer",
+                "padding": "2px 4px", "lineHeight": "1", "flexShrink": "0",
+            }
             sections.append(
                 html.Div(
-                    id={"type": "ccard", "index": c.container_id},
-                    n_clicks=0,
                     style={
                         "borderLeft": f"3px solid {border_c}",
                         "backgroundColor": _BG_SEL if is_sel else _BG,
-                        "padding": "7px 10px",
                         "marginBottom": "3px",
                         "borderRadius": "2px",
-                        "cursor": "pointer",
+                        "display": "flex",
+                        "alignItems": "center",
+                        "opacity": "0.5" if is_blacklisted else "1",
                     },
                     children=[
+                        # Clickable name area
                         html.Div(
-                            [
-                                html.Span(
-                                    name_str,
-                                    style={
-                                        "color": _TEXT,
-                                        "fontSize": "11px",
-                                        "fontWeight": "bold" if is_sel else "normal",
-                                    },
+                            id={"type": "ccard", "index": c.container_id},
+                            n_clicks=0,
+                            style={"flex": "1", "padding": "7px 6px 7px 10px", "cursor": "pointer", "minWidth": "0"},
+                            children=[
+                                html.Div(
+                                    [
+                                        html.Span(
+                                            name_str,
+                                            style={
+                                                "color": _TEXT,
+                                                "fontSize": "11px",
+                                                "fontWeight": "bold" if is_sel else "normal",
+                                                "overflow": "hidden",
+                                                "textOverflow": "ellipsis",
+                                                "whiteSpace": "nowrap",
+                                                "display": "block",
+                                            },
+                                        ),
+                                        *badge_els,
+                                    ]
                                 ),
-                                *badge_els,
-                            ]
+                                html.Div(
+                                    label,
+                                    style={"color": text_c, "fontSize": "10px", "marginTop": "2px"},
+                                ),
+                            ],
                         ),
-                        html.Div(
-                            label,
-                            style={"color": text_c, "fontSize": "10px", "marginTop": "2px"},
+                        # Refresh button
+                        html.Button(
+                            html.I(className="fa fa-refresh", style={"fontSize": "11px", "color": _MUTED}),
+                            id={"type": "btn-refresh-price", "index": cid},
+                            n_clicks=0,
+                            title="Обновить цену",
+                            style=_btn_base,
+                        ),
+                        # Hide / unblock button
+                        html.Button(
+                            html.I(
+                                className="fa fa-trash" if not is_blacklisted else "fa fa-eye",
+                                style={"fontSize": "11px", "color": _MUTED if not is_blacklisted else _GREEN},
+                            ),
+                            id={"type": "btn-toggle-blacklist", "index": cid},
+                            n_clicks=0,
+                            title="Скрыть контейнер" if not is_blacklisted else "Показать контейнер",
+                            style={**_btn_base, "paddingRight": "8px"},
                         ),
                     ],
                 )
@@ -455,173 +531,173 @@ def register_callbacks(app: Any) -> None:
             return _wrap(_safe(_render_analytics, selected_container_id=container_id))
         if tab == "system":
             from ui.renderers.system_status import render_system_status
-            from infra.task_manager import TaskQueueService
-            try:
-                _health = TaskQueueService().get_system_health()
-            except Exception:
-                _health = None
-            return render_system_status(health=_health)  # PV-46: instant load on default tab
+            return render_system_status(health=_get_system_health())
         return _no_data()
 
-    # ── System Status: refresh on task completion (only when on system tab) ────
+    # ── System Status: refresh on interval or manual button ──────────────────
     @app.callback(
         Output("tab-content", "children", allow_duplicate=True),
         Input("task-done-ts", "data"),
+        Input("btn-refresh-system", "n_clicks"),
         State("main-tabs", "value"),
         prevent_initial_call=True,
     )
-    def refresh_health_tab(_ts: Any, tab: Any) -> Any:
+    def refresh_health_tab(_ts: Any, _n: Any, tab: Any) -> Any:
         if tab != "system":
             raise dash.exceptions.PreventUpdate
         from ui.renderers.system_status import render_system_status
-        from infra.task_manager import TaskQueueService
-        try:
-            health = TaskQueueService().get_system_health()
-        except Exception:
-            health = None
-        return render_system_status(health=health)
+        return render_system_status(health=_get_system_health())
 
-    # ── Flush Failed: show confirm dialog ─────────────────────────────────────
+    # ── Worker progress: live poll while worker is busy ───────────────────────
     @app.callback(
-        Output("confirm-flush", "displayed"),
-        Input("btn-flush-failed", "n_clicks"),
-        prevent_initial_call=True,
+        Output("worker-progress-section", "children"),
+        Output("worker-progress-interval", "disabled"),
+        Input("worker-progress-interval", "n_intervals"),
+        prevent_initial_call=False,
     )
-    def show_confirm_flush(n: Any) -> bool:
-        return True
+    def update_worker_progress(_n: Any) -> Any:
+        import requests as _req
+        from config import settings as _s
+        from ui.renderers.system_status import _render_progress
+        try:
+            r = _req.get(
+                f"http://{_s.api_internal_host}:{_s.api_port}/api/v1/system/queue-status",
+                timeout=2,
+            )
+            state = r.json() if r.ok else {}
+        except Exception:
+            state = {}
+        idle = not state.get("busy") and state.get("queue_size", 0) == 0
+        return _render_progress(state), idle  # disable interval when idle
 
-    # ── Flush Failed: execute on confirmation ─────────────────────────────────
+    # ── Force Global Sync: call API endpoints ────────────────────────────────
     @app.callback(
         Output("health-action-msg", "children"),
-        Input("confirm-flush", "submit_n_clicks"),
-        prevent_initial_call=True,
-    )
-    def do_flush_failed(submit_n: Any) -> str:
-        from infra.task_manager import TaskQueueService
-        count = TaskQueueService().flush_failed()
-        return f"Flushed {count} FAILED task(s)."
-
-    # ── Reset Workers: show confirm dialog ────────────────────────────────────
-    @app.callback(
-        Output("confirm-reset-workers", "displayed"),
-        Input("btn-reset-workers", "n_clicks"),
-        prevent_initial_call=True,
-    )
-    def show_confirm_reset_workers(n: Any) -> bool:
-        return True
-
-    # ── Reset Workers: execute on confirmation ────────────────────────────────
-    @app.callback(
-        Output("health-action-msg", "children", allow_duplicate=True),
-        Input("confirm-reset-workers", "submit_n_clicks"),
-        prevent_initial_call=True,
-    )
-    def do_reset_workers(submit_n: Any) -> str:
-        from infra.task_manager import TaskQueueService
-        count = TaskQueueService().reset_stuck_workers()
-        return f"Reset {count} stuck worker(s) to IDLE."
-
-    # ── Reclaim Stuck: immediate action (no confirm needed) ───────────────────
-    @app.callback(
-        Output("health-action-msg", "children", allow_duplicate=True),
-        Input("btn-reclaim-stuck", "n_clicks"),
-        prevent_initial_call=True,
-    )
-    def do_reclaim_stuck(n: Any) -> str:
-        from infra.task_manager import TaskQueueService
-        count = TaskQueueService().reclaim_stuck_tasks()
-        return f"Reclaimed {count} stuck task(s)."
-
-    # ── Force Global Sync: enqueue all sync tasks at HIGH priority ────────────
-    @app.callback(
-        Output("health-action-msg", "children", allow_duplicate=True),
         Input("btn-force-sync", "n_clicks"),
         prevent_initial_call=True,
     )
     def do_force_sync(n: Any) -> str:
+        import requests as _req
         from config import settings as _s
-        from infra.task_manager import TaskQueueService
-        svc = TaskQueueService()
-        enqueued = []
-        if _s.steam_id:
-            t = svc.enqueue("sync_inventory", priority=1, payload={"steam_id": _s.steam_id})
-            if t:
-                enqueued.append("sync_inventory")
-        t = svc.enqueue("sync_transactions", priority=1, payload={})
-        if t:
-            enqueued.append("sync_transactions")
-        if enqueued:
-            return f"Enqueued: {', '.join(enqueued)}"
-        return "All sync tasks already queued or active."
+        dispatched = []
+        try:
+            r = _req.post(f"http://{_s.api_internal_host}:{_s.api_port}/api/v1/sync/inventory", timeout=5)
+            if r.json().get("ok"):
+                dispatched.append("sync_inventory")
+        except Exception:
+            pass
+        try:
+            r = _req.post(f"http://{_s.api_internal_host}:{_s.api_port}/api/v1/sync/market/prices", timeout=5)
+            if r.json().get("ok"):
+                dispatched.append("price_poll")
+        except Exception:
+            pass
+        return f"Dispatched: {', '.join(dispatched)}" if dispatched else "Dispatch failed — is the API running?"
 
-    # ── Sync Inventory (Celery dispatch via API endpoint) ─────────────────────
+    # ── Update Containers: bulk price_poll for all active containers ─────────
     @app.callback(
         Output("health-action-msg", "children", allow_duplicate=True),
+        Output("worker-progress-interval", "disabled", allow_duplicate=True),
+        Input("btn-update-containers", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def do_update_containers(n: Any) -> tuple:
+        import requests as _req
+        from config import settings as _s
+        try:
+            r = _req.post(
+                f"http://{_s.api_internal_host}:{_s.api_port}/api/v1/sync/market/prices",
+                timeout=5,
+            )
+            data = r.json()
+            if data.get("already_running"):
+                return "Уже выполняется — дождись завершения.", True
+            if data.get("ok"):
+                return "Обновление цен поставлено в очередь.", False
+            return data.get("message", "Неизвестная ошибка"), True
+        except Exception as exc:
+            return f"Ошибка: {exc}", True
+
+    # ── Sync Inventory (API endpoint) ────────────────────────────────────────
+    @app.callback(
+        Output("app-toast", "children", allow_duplicate=True),
+        Output("app-toast", "header", allow_duplicate=True),
+        Output("app-toast", "is_open", allow_duplicate=True),
+        Output("app-toast", "icon", allow_duplicate=True),
         Input("btn-sync-inventory", "n_clicks"),
         running=[
             (Output("btn-sync-inventory", "disabled"), True, False),
-            (Output("btn-sync-inventory", "children"), [dbc.Spinner(size="sm"), " Sending…"], "Sync Inventory"),
+            (Output("btn-sync-inventory", "children"), [dbc.Spinner(size="sm"), " Запуск…"], "Sync Inventory"),
         ],
         prevent_initial_call=True,
     )
-    def do_sync_inventory(n: Any) -> str:
+    def do_sync_inventory(n: Any) -> tuple:
         import requests as _req
         try:
-            r = _req.post("http://localhost:8000/api/v1/sync/inventory", timeout=5)
+            r = _req.post(f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/sync/inventory", timeout=5)
             data = r.json()
             if data.get("already_running"):
-                return "Inventory sync already running."
+                return "Уже выполняется — дождись завершения.", "Инвентарь", True, "warning"
             if data.get("ok"):
-                return f"Inventory sync dispatched (task {(data.get('task_id') or '')[:8]})."
-            return f"Inventory sync error: {data.get('message', 'unknown')}"
+                tid = (data.get("task_id") or "")[:8]
+                return f"Задача запущена (ID: {tid}). Следи за прогрессом в Task History.", "Синхронизация инвентаря", True, "success"
+            return data.get("message", "Неизвестная ошибка"), "Ошибка инвентаря", True, "danger"
         except Exception as exc:
-            return f"Inventory sync failed: {exc}"
+            return str(exc), "Ошибка подключения", True, "danger"
 
     # ── Sync Market Catalog (Celery dispatch via API endpoint) ────────────────
     @app.callback(
-        Output("health-action-msg", "children", allow_duplicate=True),
+        Output("app-toast", "children", allow_duplicate=True),
+        Output("app-toast", "header", allow_duplicate=True),
+        Output("app-toast", "is_open", allow_duplicate=True),
+        Output("app-toast", "icon", allow_duplicate=True),
         Input("btn-sync-catalog", "n_clicks"),
         running=[
             (Output("btn-sync-catalog", "disabled"), True, False),
-            (Output("btn-sync-catalog", "children"), [dbc.Spinner(size="sm"), " Sending…"], "Sync Catalog"),
+            (Output("btn-sync-catalog", "children"), [dbc.Spinner(size="sm"), " Запуск…"], "Sync Catalog"),
         ],
         prevent_initial_call=True,
     )
-    def do_sync_catalog(n: Any) -> str:
+    def do_sync_catalog(n: Any) -> tuple:
         import requests as _req
         try:
-            r = _req.post("http://localhost:8000/api/v1/sync/market/catalog", timeout=5)
+            r = _req.post(f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/sync/market/catalog", timeout=5)
             data = r.json()
             if data.get("already_running"):
-                return "Market catalog sync already running."
+                return "Уже выполняется — дождись завершения.", "Каталог", True, "warning"
             if data.get("ok"):
-                return f"Catalog sync dispatched (task {(data.get('task_id') or '')[:8]})."
-            return f"Catalog sync error: {data.get('message', 'unknown')}"
+                tid = (data.get("task_id") or "")[:8]
+                return f"Задача запущена (ID: {tid}). Следи за прогрессом в Task History.", "Sync Catalog", True, "success"
+            return data.get("message", "Неизвестная ошибка"), "Ошибка каталога", True, "danger"
         except Exception as exc:
-            return f"Catalog sync failed: {exc}"
+            return str(exc), "Ошибка подключения", True, "danger"
 
     # ── Sync Market Prices (Celery dispatch via API endpoint) ─────────────────
     @app.callback(
-        Output("health-action-msg", "children", allow_duplicate=True),
+        Output("app-toast", "children", allow_duplicate=True),
+        Output("app-toast", "header", allow_duplicate=True),
+        Output("app-toast", "is_open", allow_duplicate=True),
+        Output("app-toast", "icon", allow_duplicate=True),
         Input("btn-sync-prices", "n_clicks"),
         running=[
             (Output("btn-sync-prices", "disabled"), True, False),
-            (Output("btn-sync-prices", "children"), [dbc.Spinner(size="sm"), " Sending…"], "Sync Prices"),
+            (Output("btn-sync-prices", "children"), [dbc.Spinner(size="sm"), " Запуск…"], "Sync Prices"),
         ],
         prevent_initial_call=True,
     )
-    def do_sync_prices(n: Any) -> str:
+    def do_sync_prices(n: Any) -> tuple:
         import requests as _req
         try:
-            r = _req.post("http://localhost:8000/api/v1/sync/market/prices", timeout=5)
+            r = _req.post(f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/sync/market/prices", timeout=5)
             data = r.json()
             if data.get("already_running"):
-                return "Price sync already running."
+                return "Уже выполняется — дождись завершения.", "Цены", True, "warning"
             if data.get("ok"):
-                return f"Price sync dispatched (task {(data.get('task_id') or '')[:8]})."
-            return f"Price sync error: {data.get('message', 'unknown')}"
+                tid = (data.get("task_id") or "")[:8]
+                return f"Задача запущена (ID: {tid}). Следи за прогрессом в Task History.", "Sync Prices", True, "success"
+            return data.get("message", "Неизвестная ошибка"), "Ошибка цен", True, "danger"
         except Exception as exc:
-            return f"Price sync failed: {exc}"
+            return str(exc), "Ошибка подключения", True, "danger"
 
     @app.callback(
         Output("steam-history-status", "children"),
@@ -1042,25 +1118,28 @@ def register_callbacks(app: Any) -> None:
         prevent_initial_call="initial_duplicate",
     )
     def update_sync_status(_ts: Any, sync_data: Any) -> Any:
-        """Show last sync age and disable button while sync tasks are in queue."""
+        """Show last sync age; check worker busy state via API."""
         from src.domain.connection import SessionLocal
-        from src.domain.models import SystemSettings, TaskQueue, TaskStatus
+        from src.domain.models import SystemSettings
         from dash import html as _html
+        import requests as _req
+        from config import settings as _s
 
-        # Check if sync tasks are currently running
+        # Check if worker is busy
+        worker_busy = False
+        try:
+            r = _req.get(
+                f"http://{_s.api_internal_host}:{_s.api_port}/api/v1/system/queue-status",
+                timeout=2,
+            )
+            state = r.json() if r.ok else {}
+            worker_busy = bool(state.get("busy")) or state.get("queue_size", 0) > 0
+        except Exception:
+            pass
+
+        last_times = []
         try:
             with SessionLocal() as db:
-                in_flight = (
-                    db.query(TaskQueue)
-                    .filter(
-                        TaskQueue.type.in_(["sync_inventory", "sync_transactions"]),
-                        TaskQueue.status.in_([TaskStatus.PENDING, TaskStatus.PROCESSING]),
-                    )
-                    .count()
-                )
-
-                # Get last successful sync time (use min of both task types)
-                last_times = []
                 for task_type in ["sync_inventory", "sync_transactions"]:
                     row = db.get(SystemSettings, f"last_sync_{task_type}")
                     if row and row.value:
@@ -1069,25 +1148,262 @@ def register_callbacks(app: Any) -> None:
                         except ValueError:
                             pass
         except Exception:
-            return "", False, [_html.I(className="fa fa-refresh me-1"), "Синхронизировать"]
+            pass
 
-        if in_flight > 0:
+        if worker_busy:
             btn_label = [dbc.Spinner(size="sm", color="light"), " Sync in progress..."]
             return "Sync in progress...", True, btn_label
 
         if last_times:
             oldest = min(last_times)
             age_min = int((datetime.now(UTC).replace(tzinfo=None) - oldest).total_seconds() / 60)
-            if age_min < 60:
-                age_str = f"Last sync: {age_min} min ago"
-            else:
-                age_h = age_min // 60
-                age_str = f"Last sync: {age_h}h ago"
+            age_str = f"Last sync: {age_min} min ago" if age_min < 60 else f"Last sync: {age_min // 60}h ago"
         else:
             age_str = "Last sync: never"
 
         btn_label = [_html.I(className="fa fa-refresh me-1"), "Синхронизировать"]
         return age_str, False, btn_label
+
+    # ── Per-container: refresh price ─────────────────────────────────────────────
+    @app.callback(
+        Output("app-toast", "children", allow_duplicate=True),
+        Output("app-toast", "header", allow_duplicate=True),
+        Output("app-toast", "is_open", allow_duplicate=True),
+        Output("app-toast", "icon", allow_duplicate=True),
+        Input({"type": "btn-refresh-price", "index": ALL}, "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def do_refresh_container_price(n_clicks_list: Any) -> Any:
+        ctx = callback_context
+        if not ctx.triggered:
+            raise dash.exceptions.PreventUpdate
+        triggered = [t for t in ctx.triggered if t.get("value") and t["value"] > 0]
+        if not triggered:
+            raise dash.exceptions.PreventUpdate
+        prop_id = triggered[0]["prop_id"]
+        try:
+            cid = _json.loads(prop_id.rsplit(".", 1)[0])["index"]
+        except Exception:
+            raise dash.exceptions.PreventUpdate
+        import requests as _req
+        try:
+            r = _req.post(f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/containers/{cid}/sync-price", timeout=5)
+            data = r.json()
+            if data.get("ok"):
+                tid = (data.get("task_id") or "")[:8]
+                return f"Задача запущена (ID: {tid}). Результат появится в Task History.", "Обновление цены", True, "success"
+            return data.get("message", "Неизвестная ошибка"), "Ошибка", True, "danger"
+        except Exception as exc:
+            return str(exc), "Ошибка подключения", True, "danger"
+
+    # ── Stop task ────────────────────────────────────────────────────────────────
+    @app.callback(
+        Output("tab-content", "children", allow_duplicate=True),
+        Output("toast-store", "data", allow_duplicate=True),
+        Input({"type": "btn-stop-task", "index": ALL}, "n_clicks"),
+        State("toast-store", "data"),
+        prevent_initial_call=True,
+    )
+    def do_stop_task(n_clicks_list: Any, store: Any) -> Any:
+        ctx = callback_context
+        if not ctx.triggered:
+            raise dash.exceptions.PreventUpdate
+        triggered = [t for t in ctx.triggered if t.get("value") and t["value"] > 0]
+        if not triggered:
+            raise dash.exceptions.PreventUpdate
+
+        prop_id = triggered[0]["prop_id"]
+        try:
+            job_type: str | None = _json.loads(prop_id.rsplit(".", 1)[0])["index"]
+        except Exception:
+            job_type = None
+
+        import requests as _req
+        try:
+            _req.post(
+                f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/system/cancel-task",
+                json={"job_type": job_type},
+                timeout=5,
+            )
+        except Exception as exc:
+            logger.warning("do_stop_task: cancel API error — %s", exc)
+
+        # Keep only already-dismissed toasts (is_open=False); drop all active ones.
+        # In a single-worker system any active notification belongs to the cancelled job.
+        cleared_store = [e for e in (store or []) if not e.get("is_open", True)]
+
+        from ui.renderers.system_status import render_system_status
+        return render_system_status(health=_get_system_health()), cleared_store
+
+    # ── Toast-store: force-clear on page load (prevents phantom toasts after F5) ─
+    @app.callback(
+        Output("toast-store", "data", allow_duplicate=True),
+        Input("startup-interval", "n_intervals"),
+        prevent_initial_call=False,
+    )
+    def _init_toast_store(_n: Any) -> Any:
+        return []
+
+    # ── System tab: unblacklist from blacklisted section ────────────────────────
+    @app.callback(
+        Output("tab-content", "children", allow_duplicate=True),
+        Input({"type": "btn-unblacklist", "index": ALL}, "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def do_unblacklist_from_system(n_clicks_list: Any) -> Any:
+        ctx = callback_context
+        if not ctx.triggered:
+            raise dash.exceptions.PreventUpdate
+        triggered = [t for t in ctx.triggered if t.get("value") and t["value"] > 0]
+        if not triggered:
+            raise dash.exceptions.PreventUpdate
+        prop_id = triggered[0]["prop_id"]
+        try:
+            cid = _json.loads(prop_id.rsplit(".", 1)[0])["index"]
+        except Exception:
+            raise dash.exceptions.PreventUpdate
+        try:
+            from src.domain.connection import SessionLocal
+            from src.domain.models import DimContainer
+            with SessionLocal() as db:
+                c = db.query(DimContainer).filter(DimContainer.container_id == cid).first()
+                if c:
+                    c.is_blacklisted = 0
+                    db.commit()
+        except Exception as exc:
+            logger.error("do_unblacklist_from_system: %s", exc)
+        from ui.renderers.system_status import render_system_status
+        return render_system_status(health=_get_system_health())
+
+    # ── Per-container: toggle blacklist ──────────────────────────────────────────
+    @app.callback(
+        Output("invest-store", "data", allow_duplicate=True),
+        Input({"type": "btn-toggle-blacklist", "index": ALL}, "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def do_toggle_blacklist(n_clicks_list: Any) -> Any:
+        ctx = callback_context
+        if not ctx.triggered:
+            raise dash.exceptions.PreventUpdate
+        triggered = [t for t in ctx.triggered if t.get("value") and t["value"] > 0]
+        if not triggered:
+            raise dash.exceptions.PreventUpdate
+        prop_id = triggered[0]["prop_id"]
+        try:
+            cid = _json.loads(prop_id.rsplit(".", 1)[0])["index"]
+        except Exception:
+            raise dash.exceptions.PreventUpdate
+        import requests as _req
+        try:
+            from src.domain.connection import SessionLocal
+            from src.domain.models import DimContainer
+            with SessionLocal() as db:
+                c = db.query(DimContainer).filter(DimContainer.container_id == cid).first()
+                if c is None:
+                    raise dash.exceptions.PreventUpdate
+                c.is_blacklisted = 0 if c.is_blacklisted else 1
+                db.commit()
+        except dash.exceptions.PreventUpdate:
+            raise
+        except Exception as exc:
+            logger.error("do_toggle_blacklist: %s", exc)
+            raise dash.exceptions.PreventUpdate
+        # Re-fetch signals to trigger sidebar re-render
+        from src.domain.item_service import ItemService
+        svc = ItemService.open()
+        try:
+            return svc.get_signals()
+        finally:
+            svc.close()
+
+    # ── Toast stack: aggregate → store → render ───────────────────────────────
+
+    def _push_toast(store: list, text: Any, header: str, icon: str) -> list:
+        import time as _t
+        entry = {
+            "id": int(_t.time() * 1000),
+            "text": text,
+            "header": header or "",
+            "icon": icon or "info",
+            "is_open": True,
+        }
+        return (list(store or []) + [entry])[-5:]
+
+    @app.callback(
+        Output("toast-store", "data"),
+        Input("app-toast", "is_open"),
+        State("app-toast", "children"),
+        State("app-toast", "header"),
+        State("app-toast", "icon"),
+        State("toast-store", "data"),
+        prevent_initial_call=True,
+    )
+    def _aggregate_toast(is_open: Any, text: Any, header: Any, icon: Any, store: Any) -> Any:
+        if not is_open:
+            raise dash.exceptions.PreventUpdate
+        return _push_toast(store or [], text, header or "", icon or "info")
+
+    @app.callback(
+        Output("toast-store", "data", allow_duplicate=True),
+        Input({"type": "notif", "index": ALL}, "is_open"),
+        State("toast-store", "data"),
+        prevent_initial_call=True,
+    )
+    def _sync_toast_dismissals(is_open_list: Any, store: Any) -> Any:
+        if not any(v is False for v in (is_open_list or [])):
+            raise dash.exceptions.PreventUpdate
+        ctx = callback_context
+        closed_ids: set[str] = set()
+        for t in ctx.triggered:
+            if t["value"] is False:
+                try:
+                    closed_ids.add(str(_json.loads(t["prop_id"].rsplit(".", 1)[0])["index"]))
+                except Exception:
+                    pass
+        if not closed_ids:
+            raise dash.exceptions.PreventUpdate
+        updated = [
+            {**e, "is_open": False} if str(e["id"]) in closed_ids else e
+            for e in (store or [])
+        ]
+        if updated == store:
+            raise dash.exceptions.PreventUpdate
+        return updated
+
+    @app.callback(
+        Output("toast-stack-container", "children"),
+        Input("toast-store", "data"),
+        prevent_initial_call=False,
+    )
+    def _render_toast_stack(store: Any) -> Any:
+        if not store:
+            return []
+        _ICON_BORDER = {
+            "success": "#2a9d5c",
+            "danger":  "#dc3545",
+            "warning": "#ffc107",
+            "info":    _BLUE,
+        }
+        return [
+            dbc.Toast(
+                entry.get("text", ""),
+                id={"type": "notif", "index": entry["id"]},
+                header=entry.get("header", ""),
+                is_open=entry.get("is_open", True),
+                dismissable=True,
+                duration=3000,
+                icon=entry.get("icon", "info"),
+                style={
+                    "backgroundColor": _BG,
+                    "border": f"1px solid {_ICON_BORDER.get(entry.get('icon', ''), _BORDER)}",
+                    "color": _TEXT,
+                    "fontSize": "13px",
+                    "width": "320px",
+                    "boxShadow": "0 4px 12px rgba(0,0,0,0.4)",
+                },
+            )
+            for entry in store
+        ]
 
     _register_cookie_callbacks(app)
 
@@ -1104,19 +1420,17 @@ def _register_cookie_callbacks(app: dash.Dash) -> None:
         prevent_initial_call=False,  # fire on load to show modal immediately if EXPIRED
     )
     def check_cookie_status(n_intervals, close_clicks, is_open):
-        """Poll cookie status; open modal when EXPIRED or PAUSED_AUTH task exists."""
+        """Poll cookie status; open modal when EXPIRED."""
         from dash import ctx
         if ctx.triggered_id == "cookie-close-btn":
             logger.debug("check_cookie_status: user closed modal")
             return False
 
         cookie_expired = False
-        has_paused = False
-
         try:
             import requests
             resp = requests.get(
-                f"http://127.0.0.1:{_settings.api_port}/api/v1/system/cookie-status",
+                f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/system/cookie-status",
                 timeout=3,
             )
             api_status = resp.json().get("status") if resp.ok else "ERROR"
@@ -1125,18 +1439,7 @@ def _register_cookie_callbacks(app: dash.Dash) -> None:
         except Exception as exc:
             logger.warning("check_cookie_status: API unreachable — %s", exc)
 
-        try:
-            from src.domain.connection import SessionLocal as _SL
-            from src.domain.sql_repositories import SqlAlchemyTaskQueueRepository as _Repo
-            with _SL() as _db:
-                has_paused = _Repo(_db).has_paused_auth_tasks()
-            logger.info("check_cookie_status: has_paused_auth=%s", has_paused)
-        except Exception as exc:
-            logger.warning("check_cookie_status: DB check failed — %s", exc)
-
-        should_open = cookie_expired or has_paused
-        logger.info("check_cookie_status: should_open=%s (was %s)", should_open, is_open)
-        return should_open
+        return cookie_expired
 
     @app.callback(
         Output("cookie-modal", "is_open", allow_duplicate=True),
@@ -1154,7 +1457,7 @@ def _register_cookie_callbacks(app: dash.Dash) -> None:
         try:
             import requests
             resp = requests.post(
-                f"http://127.0.0.1:{_settings.api_port}/api/v1/system/update-cookie",
+                f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/system/update-cookie",
                 json={
                     "value": cookie_value,
                     "sessionid": sessionid_value or "",

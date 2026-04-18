@@ -2,19 +2,15 @@
 Sync endpoints — on-demand Steam data refresh.
 
 POST /sync/wallet           — fetch wallet balance from Steam, persist to cache
-POST /sync/inventory        — dispatch run_inventory_sync Celery task (Redis-locked)
+POST /sync/inventory        — enqueue inventory sync job
 POST /sync/transactions     — fetch Steam Market transaction history
-POST /sync/market/catalog   — dispatch run_market_sync Celery task (Redis-locked)
-POST /sync/market/prices    — dispatch poll_container_prices_task Celery task (Redis-locked)
-
-Inventory / catalog / prices endpoints use a Redis SET NX lock to prevent
-duplicate dispatches when the user clicks rapidly or calls the API concurrently.
-Lock TTL matches the per-task TASK_TTL constant so it expires once the task
-is expected to finish (with a generous ceiling).
+POST /sync/market/catalog   — enqueue market catalog discovery job
+POST /sync/market/prices    — enqueue price poll job
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter
@@ -30,62 +26,24 @@ from scrapper.steam_sync import sync_transactions, sync_wallet
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sync", tags=["sync"])
 
-# Redis lock key → (lock TTL seconds, human label)
-_LOCK_META: dict[str, tuple[int, str]] = {
-    "sync:lock:inventory":     (120, "run_inventory_sync"),
-    "sync:lock:market_catalog": (600, "run_market_sync"),
-    "sync:lock:market_prices":  (600, "poll_container_prices_task"),
-}
 
-
-def _try_dispatch(lock_key: str, dispatch_fn) -> SyncDispatchResponse:
-    """
-    Acquire Redis NX lock → dispatch Celery task → return result.
-
-    Returns ok=False (already_running=True) when another caller holds the lock.
-    """
-    ttl, label = _LOCK_META[lock_key]
+def _enqueue(job: dict, label: str) -> SyncDispatchResponse:
+    """Put a job on the in-process work queue. Returns ok=False when queue is full."""
     try:
-        from infra.redis_client import get_redis
-        r = get_redis()
-        acquired = r.set(lock_key, "1", nx=True, ex=ttl)
-        if not acquired:
-            return SyncDispatchResponse(
-                ok=False,
-                already_running=True,
-                message=f"{label} is already running.",
-            )
+        from infra.work_queue import get_queue
+        get_queue().put_nowait(job)
+        return SyncDispatchResponse(ok=True, already_running=False, message=f"{label} enqueued.")
+    except asyncio.QueueFull:
+        return SyncDispatchResponse(ok=False, already_running=True, message=f"{label} already queued (queue full).")
     except Exception as exc:
-        logger.warning("sync: Redis lock check failed for %s: %s", lock_key, exc)
-        # Fall through — dispatch without lock rather than blocking the user.
-
-    try:
-        task = dispatch_fn()
-        return SyncDispatchResponse(
-            ok=True,
-            already_running=False,
-            task_id=task.id if task else None,
-            message=f"{label} dispatched.",
-        )
-    except Exception as exc:
-        logger.error("sync: dispatch failed for %s: %s", lock_key, exc)
-        return SyncDispatchResponse(
-            ok=False,
-            already_running=False,
-            message=f"Dispatch error: {exc}",
-        )
+        logger.error("sync: enqueue failed for %s: %s", label, exc)
+        return SyncDispatchResponse(ok=False, already_running=False, message=f"Enqueue error: {exc}")
 
 
-# ── Wallet (unchanged — direct sync, no Celery) ───────────────────────────────
+# ── Wallet (direct sync, no queue) ───────────────────────────────────────────
 
 @router.post("/wallet", response_model=SyncWalletResponse)
 def sync_wallet_endpoint() -> SyncWalletResponse:
-    """
-    Fetch Steam wallet balance from steamcommunity.com/market/ and persist to cache.
-
-    Requires STEAM_LOGIN_SECURE cookie in .env.
-    On failure returns cached balance (if any) with ok=False.
-    """
     result = sync_wallet()
     return SyncWalletResponse(
         ok=result.ok,
@@ -95,42 +53,20 @@ def sync_wallet_endpoint() -> SyncWalletResponse:
     )
 
 
-# ── Inventory sync (Celery, Redis-locked) ─────────────────────────────────────
+# ── Inventory sync ────────────────────────────────────────────────────────────
 
 @router.post("/inventory", response_model=SyncDispatchResponse)
 def sync_inventory_endpoint() -> SyncDispatchResponse:
-    """
-    Dispatch run_inventory_sync Celery task for the configured STEAM_ID.
-
-    Returns 409-equivalent (ok=False, already_running=True) when a task is
-    already in flight (Redis lock held).
-    """
     steam_id = (settings.steam_id or "").strip()
     if not steam_id:
-        return SyncDispatchResponse(
-            ok=False,
-            already_running=False,
-            message="No STEAM_ID configured.",
-        )
-
-    def _dispatch():
-        from scrapper.runner import run_inventory_sync
-        return run_inventory_sync.delay(steam_id)
-
-    return _try_dispatch("sync:lock:inventory", _dispatch)
+        return SyncDispatchResponse(ok=False, already_running=False, message="No STEAM_ID configured.")
+    return _enqueue({"type": "sync_inventory", "steam_id": steam_id}, "sync_inventory")
 
 
-# ── Transactions (unchanged — direct sync, no Celery) ────────────────────────
+# ── Transactions (direct sync, no queue) ─────────────────────────────────────
 
 @router.post("/transactions", response_model=SyncTransactionsResponse)
 def sync_transactions_endpoint() -> SyncTransactionsResponse:
-    """
-    Fetch Steam Market CS2 transaction history (up to 10 pages).
-
-    Does NOT persist to DB — persistence is handled by the dashboard callback
-    so the service layer stays stateless.
-    Requires STEAM_LOGIN_SECURE cookie in .env.
-    """
     result = sync_transactions()
     return SyncTransactionsResponse(
         ok=result.ok,
@@ -141,35 +77,15 @@ def sync_transactions_endpoint() -> SyncTransactionsResponse:
     )
 
 
-# ── Market catalog discovery (Celery, Redis-locked) ───────────────────────────
+# ── Market catalog discovery ──────────────────────────────────────────────────
 
 @router.post("/market/catalog", response_model=SyncDispatchResponse)
 def sync_market_catalog_endpoint() -> SyncDispatchResponse:
-    """
-    Dispatch run_market_sync Celery task to discover new CS2 containers from
-    Steam Community Market.
-
-    Protected by a 10-minute Redis lock to prevent duplicate scrape runs.
-    """
-    def _dispatch():
-        from scrapper.runner import run_market_sync
-        return run_market_sync.delay()
-
-    return _try_dispatch("sync:lock:market_catalog", _dispatch)
+    return _enqueue({"type": "market_catalog"}, "market_catalog")
 
 
-# ── Market price refresh (Celery, Redis-locked) ───────────────────────────────
+# ── Market price refresh ──────────────────────────────────────────────────────
 
 @router.post("/market/prices", response_model=SyncDispatchResponse)
 def sync_market_prices_endpoint() -> SyncDispatchResponse:
-    """
-    Dispatch poll_container_prices_task Celery task to refresh current prices
-    for all tracked containers.
-
-    Protected by a 10-minute Redis lock to prevent overlapping price polls.
-    """
-    def _dispatch():
-        from scheduler.tasks import poll_container_prices_task
-        return poll_container_prices_task.delay()
-
-    return _try_dispatch("sync:lock:market_prices", _dispatch)
+    return _enqueue({"type": "price_poll"}, "price_poll")

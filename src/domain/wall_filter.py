@@ -19,6 +19,7 @@ def compute_wall_metrics(
     current_price: float,
     target_price: float,
     avg_daily_vol: float,
+    vol_30d: float = 0.0,
 ) -> dict:
     """
     Compute sell wall metrics between current_price and target_price.
@@ -29,21 +30,24 @@ def compute_wall_metrics(
 
     Algorithm:
         Sum qty for all price levels where current_price <= price <= target_price.
-        estimated_days = volume_to_target / avg_daily_vol
+        effective_daily_vol = avg_daily_vol * (1.0 + vol_30d)
+        estimated_days = volume_to_target / effective_daily_vol
         passes_wall_filter = estimated_days <= settings.wall_max_days
 
     Returns:
         {
             "volume_to_target": int,     cumulative qty in sell wall [current, target]
-            "estimated_days": float,     volume_to_target / avg_daily_vol
+            "estimated_days": float,     volume_to_target / effective_daily_vol
             "passes_wall_filter": bool,  estimated_days <= wall_max_days
         }
 
     Edge cases:
-        - Empty sell_order_graph      → volume=0, estimated_days=0.0, passes=True
-        - avg_daily_vol=0, volume>0   → estimated_days=inf, passes=False
-        - avg_daily_vol=0, volume=0   → estimated_days=0.0, passes=True
-        - target_price <= current     → volume=0 (nothing to absorb), passes=True
+        - Empty sell_order_graph           → volume=0, estimated_days=0.0, passes=True
+        - avg_daily_vol=0, volume>0        → estimated_days=inf, passes=False
+        - avg_daily_vol=0, volume=0        → estimated_days=0.0, passes=True
+        - target_price <= current          → volume=0 (nothing to absorb), passes=True
+        - vol_30d=0.30 (30% volatility)    → effective_daily_vol is 1.3× higher,
+                                             wall dissolves 30% faster
     """
     volume_to_target = 0
 
@@ -57,12 +61,14 @@ def compute_wall_metrics(
         if current_price <= price <= target_price:
             volume_to_target += qty
 
+    effective_daily_vol = avg_daily_vol * (1.0 + vol_30d)
+
     if volume_to_target == 0:
         estimated_days = 0.0
-    elif avg_daily_vol <= 0:
+    elif effective_daily_vol <= 0:
         estimated_days = math.inf
     else:
-        estimated_days = volume_to_target / avg_daily_vol
+        estimated_days = volume_to_target / effective_daily_vol
 
     passes = False if math.isinf(estimated_days) else estimated_days <= settings.wall_max_days
 

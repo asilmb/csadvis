@@ -2,10 +2,9 @@
 Entry point — CLI dispatcher.
 
 Usage:
-    python src/main.py api        Start FastAPI server (uvicorn)
+    python src/main.py api        Start FastAPI server (uvicorn) with in-process worker
     python src/main.py ui         Start Dash analytics dashboard
     python src/main.py scrapper   Run one market-sync scrape pass
-    python src/main.py worker     Start Celery background worker
 """
 
 from __future__ import annotations
@@ -14,7 +13,8 @@ import sys
 
 
 def _cmd_api() -> None:
-    """Start the FastAPI / uvicorn server."""
+    """Start the FastAPI / uvicorn server (includes in-process asyncio worker)."""
+    import asyncio
     import os
     import signal
     from collections.abc import AsyncGenerator
@@ -48,10 +48,32 @@ def _cmd_api() -> None:
         init_db()
         with SessionLocal() as db:
             seed_database(db)
+
+        from infra.work_queue import supervised_worker, get_queue
+        worker_task = asyncio.create_task(supervised_worker(), name="work_queue_worker")
+
+        # Enqueue initial price poll if there are active containers in the DB
+        try:
+            from src.domain.connection import SessionLocal as _SL
+            from src.domain.models import DimContainer
+            with _SL() as _db:
+                active_count = _db.query(DimContainer).filter(DimContainer.is_blacklisted == 0).count()
+            if active_count > 0:
+                get_queue().put_nowait({"type": "price_poll"})
+                logger.info("startup_enqueue", service="api", job="price_poll", containers=active_count)
+        except Exception as _exc:
+            logger.warning("startup_enqueue_failed", service="api", error=str(_exc))
+
         logger.info("api_ready", service="api", host=settings.api_host, port=settings.api_port)
+
         try:
             yield
         finally:
+            worker_task.cancel()
+            try:
+                await worker_task
+            except asyncio.CancelledError:
+                pass
             engine.dispose()
             logger.info("db_pool_closed", service="api")
 
@@ -136,22 +158,12 @@ def _cmd_scrapper() -> None:
     logger.info("scrapper: done — scraped=%d inserted=%d", len(containers), inserted)
 
 
-def _cmd_worker() -> None:
-    """Start the Celery background worker."""
-    from scheduler.celery_app import app as celery_app
-
-    celery_app.worker_main(
-        argv=["worker", "--loglevel=info", "--concurrency=2", "-Q", "celery"]
-    )
-
-
 # ─── Dispatch ────────────────────────────────────────────────────────────────
 
 _COMMANDS: dict[str, tuple[str, object]] = {
-    "api":      ("Start FastAPI server",               _cmd_api),
-    "ui":       ("Start Dash analytics dashboard",     _cmd_ui),
-    "scrapper": ("Run one market-sync scrape pass",    _cmd_scrapper),
-    "worker":   ("Start Celery background worker",     _cmd_worker),
+    "api":      ("Start FastAPI server + in-process worker", _cmd_api),
+    "ui":       ("Start Dash analytics dashboard",           _cmd_ui),
+    "scrapper": ("Run one market-sync scrape pass",          _cmd_scrapper),
 }
 
 if __name__ == "__main__":
