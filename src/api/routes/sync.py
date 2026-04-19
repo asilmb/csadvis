@@ -17,7 +17,7 @@ from fastapi import APIRouter
 
 from config import settings
 from scrapper.steam_sync import sync_transactions, sync_wallet
-from src.api.schemas import (
+from api.schemas import (
     SyncDispatchResponse,
     SyncTransactionsResponse,
     SyncWalletResponse,
@@ -28,9 +28,11 @@ router = APIRouter(prefix="/sync", tags=["sync"])
 
 
 def _enqueue(job: dict, label: str) -> SyncDispatchResponse:
-    """Put a job on the in-process work queue. Returns ok=False when queue is full."""
+    """Put a job on the in-process work queue. Returns ok=False when already active or queue is full."""
     try:
-        from infra.work_queue import enqueue
+        from infra.work_queue import enqueue, is_job_type_active
+        if is_job_type_active(job["type"]):
+            return SyncDispatchResponse(ok=False, already_running=True, message=f"{label} уже выполняется.")
         enqueue(job)
         return SyncDispatchResponse(ok=True, already_running=False, message=f"{label} enqueued.")
     except asyncio.QueueFull:

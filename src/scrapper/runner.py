@@ -180,6 +180,7 @@ async def run_backfill_history(names: list[str] | None = None, session_id: int |
     import random as _random
 
     from infra.scrape_guard import create_session, finish_session, tick_session
+    from scrapper.steam.client import _is_emergency_blocked
     ordered_names: list[str] = (
         [n for n in names_filter if n in id_map] if names_filter else list(id_map.keys())
     )
@@ -199,6 +200,7 @@ async def run_backfill_history(names: list[str] | None = None, session_id: int |
     from datetime import date
     saved_total = 0
     errors = 0
+    _rate_limited = False
 
     for name in ordered_names:
         cid = id_map[name]
@@ -217,6 +219,12 @@ async def run_backfill_history(names: list[str] | None = None, session_id: int |
             continue
 
         if not rows:
+            if _is_emergency_blocked():
+                logger.warning(
+                    "backfill_history: stopping — Steam 429 block active, session preserved for resume"
+                )
+                _rate_limited = True
+                break
             continue
 
         existing_max: date = max_dates.get(name, date.min)
@@ -235,6 +243,9 @@ async def run_backfill_history(names: list[str] | None = None, session_id: int |
 
         await asyncio.to_thread(tick_session, session_id)
 
+    if _rate_limited:
+        logger.warning("backfill_history: aborted due to Steam 429 — saved=%d errors=%d", saved_total, errors)
+        return {"status": "rate_limited", "saved": saved_total, "errors": errors}
     await asyncio.to_thread(finish_session, session_id)
     logger.info("backfill_history: done — saved=%d errors=%d", saved_total, errors)
     return {"status": "ok", "saved": saved_total, "errors": errors}

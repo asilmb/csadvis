@@ -341,6 +341,7 @@ class SteamMarketClient:
             return []
 
         if resp.status_code == 429:
+            logger.warning("steam_429", service="steam_client", endpoint="pricehistory", name=market_hash_name)
             _trigger_emergency_stop(market_hash_name, attempt=self._attempt)
             return []
         if resp.status_code == 400:
@@ -382,6 +383,7 @@ class SteamMarketClient:
         resp = await self._get(_OVERVIEW_URL, params=params)
 
         if resp.status_code == 429:
+            logger.warning("steam_429", service="steam_client", endpoint="priceoverview", name=market_hash_name)
             _trigger_emergency_stop(market_hash_name, attempt=self._attempt)
             return {}
         if resp.status_code in (401, 403):
@@ -440,6 +442,7 @@ class SteamMarketClient:
             await asyncio.sleep(request_delay())
 
         if resp.status_code == 429:
+            logger.warning("steam_429", service="steam_client", endpoint="listings", name=market_hash_name)
             _trigger_emergency_stop(market_hash_name, attempt=self._attempt)
             return None
         if resp.status_code != 200:

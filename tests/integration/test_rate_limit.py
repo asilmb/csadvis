@@ -14,6 +14,7 @@ instance is required.
 from __future__ import annotations
 
 import asyncio
+from contextlib import ExitStack
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -267,3 +268,276 @@ class TestQueueIntegrityAfter429:
 
         assert result == {}
         client._session.get.assert_not_called()
+
+
+# ── Critical Path 2e: finish_session not called when 429 aborts a running job ──
+
+class TestPricePollAbortsOn429:
+    """price_poll must preserve the session (not call finish_session) when 429 fires mid-job."""
+
+    def _make_db_mock(self, containers):
+        mock_db = MagicMock()
+        mock_db.__enter__ = MagicMock(return_value=mock_db)
+        mock_db.__exit__ = MagicMock(return_value=False)
+        # Support arbitrary .filter().filter()...filter().all() chains:
+        # the handler applies 1 filter normally, 2 when container_ids is set.
+        q = MagicMock()
+        q.all.return_value = containers
+        q.filter.return_value = q  # self-referential so chained .filter() stays on q
+        mock_db.query.return_value.filter.return_value = q
+        return mock_db
+
+    def _make_client_mock(self, responses: list):
+        """Mock Steam client whose fetch_price_overview returns responses in sequence."""
+        idx = 0
+
+        async def fake_fetch(_name):
+            nonlocal idx
+            r = responses[min(idx, len(responses) - 1)]
+            idx += 1
+            return r
+
+        mock = MagicMock()
+        mock.__aenter__ = AsyncMock(return_value=mock)
+        mock.__aexit__ = AsyncMock(return_value=False)
+        mock.fetch_price_overview = fake_fetch
+        return mock
+
+    def _base_patches(self, containers, client_mock, blocked_seq, session_id=99):
+        settings_mock = MagicMock()
+        settings_mock.ratio_floor = 1.0
+        import sys
+        sys.modules.setdefault("config", MagicMock(settings=settings_mock))
+
+        return [
+            patch("infra.work_queue.auth_credentials_exist", return_value=True),
+            patch("infra.work_queue.SteamMarketClient", return_value=client_mock),
+            patch("infra.work_queue.SessionLocal", return_value=self._make_db_mock(containers)),
+            patch("infra.work_queue.ItemService"),
+            patch("infra.scrape_guard.check_cooldown"),
+            patch("infra.scrape_guard.create_session", return_value=session_id),
+            patch("scrapper.steam.client._is_emergency_blocked", side_effect=blocked_seq),
+            patch("random.shuffle"),
+            patch("asyncio.sleep", new=AsyncMock()),
+            patch("asyncio.to_thread", side_effect=lambda fn, *a, **kw: fn(*a, **kw)),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_finish_session_not_called_when_429_mid_job(self):
+        """finish_session must NOT be called when 429 fires during a running price_poll."""
+        import infra.work_queue as wq
+
+        finish_calls: list = []
+        tick_calls: list = []
+
+        containers = [
+            MagicMock(container_id=f"cid-{i}", container_name="Prisma 2 Case")
+            for i in range(3)
+        ]
+        client_mock = self._make_client_mock([
+            {"lowest_price": "500 ₸", "volume": "100"},  # item 0: success
+            {},                                            # item 1: 429 response
+        ])
+        # _is_emergency_blocked: False after item 0, True after item 1
+        blocked = iter([False, True])
+
+        patches = self._base_patches(containers, client_mock, blocked)
+        patches.append(patch("infra.scrape_guard.tick_session", side_effect=tick_calls.append))
+        patches.append(patch("infra.scrape_guard.finish_session", side_effect=finish_calls.append))
+
+        with ExitStack() as stack:
+            mocks = [stack.enter_context(p) for p in patches]
+            mock_svc = MagicMock(process_new_price=MagicMock(), close=MagicMock())
+            mocks[3].open.return_value = mock_svc  # ItemService
+            await wq._handle_price_poll({"type": "price_poll"})
+
+        assert finish_calls == [], "finish_session must NOT be called — session must stay open for resume"
+        assert tick_calls.count(99) == 1, "only item 0 should be ticked before the 429"
+
+    @pytest.mark.asyncio
+    async def test_429_item_itself_is_not_ticked(self):
+        """The item whose fetch triggered 429 must not be counted as processed."""
+        import infra.work_queue as wq
+
+        tick_calls: list = []
+
+        containers = [
+            MagicMock(container_id=f"cid-{i}", container_name="Prisma 2 Case")
+            for i in range(4)
+        ]
+        client_mock = self._make_client_mock([
+            {"lowest_price": "500 ₸", "volume": "100"},  # item 0
+            {"lowest_price": "600 ₸", "volume": "200"},  # item 1
+            {},                                            # item 2: 429
+            {},                                            # item 3: never reached
+        ])
+        # False × 2 for items 0+1, True for item 2
+        blocked = iter([False, False, True])
+
+        patches = self._base_patches(containers, client_mock, blocked, session_id=77)
+        patches.append(patch("infra.scrape_guard.tick_session", side_effect=tick_calls.append))
+        patches.append(patch("infra.scrape_guard.finish_session"))
+
+        with ExitStack() as stack:
+            mocks = [stack.enter_context(p) for p in patches]
+            mock_svc = MagicMock(process_new_price=MagicMock(), close=MagicMock())
+            mocks[3].open.return_value = mock_svc
+            await wq._handle_price_poll({"type": "price_poll"})
+
+        assert tick_calls.count(77) == 2, "items 0+1 ticked, items 2+3 must NOT be ticked"
+
+
+# ── Critical Path 2f: session resume after 429 abort ─────────────────────────
+
+class TestResumeAfterAbort:
+    """After a 429 abort, remaining_ids is correct and a resumed job finishes the session."""
+
+    @pytest.fixture(autouse=True)
+    def sqlite_scrape_guard(self, monkeypatch):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from src.domain.models import Base
+        import src.domain.connection as _conn
+
+        engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine)
+
+        class _Ctx:
+            def __init__(self):
+                self._s = Session()
+            def __enter__(self):
+                return self._s
+            def __exit__(self, *_):
+                self._s.close()
+
+        # scrape_guard functions do `from src.domain.connection import SessionLocal` locally,
+        # so we patch at the source module — not on scrape_guard itself.
+        monkeypatch.setattr(_conn, "SessionLocal", _Ctx)
+        self.engine = engine
+        self.Session = Session
+
+    def _make_db_mock(self, containers):
+        mock_db = MagicMock()
+        mock_db.__enter__ = MagicMock(return_value=mock_db)
+        mock_db.__exit__ = MagicMock(return_value=False)
+        q = MagicMock()
+        q.all.return_value = containers
+        q.filter.return_value = q
+        mock_db.query.return_value.filter.return_value = q
+        return mock_db
+
+    def _common_patches(self, containers, fetch_response, blocked_value):
+        settings_mock = MagicMock()
+        settings_mock.ratio_floor = 1.0
+        import sys
+        sys.modules.setdefault("config", MagicMock(settings=settings_mock))
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.fetch_price_overview = fetch_response
+
+        return mock_client, [
+            patch("infra.work_queue.auth_credentials_exist", return_value=True),
+            patch("infra.work_queue.SteamMarketClient", return_value=mock_client),
+            patch("infra.work_queue.SessionLocal", return_value=self._make_db_mock(containers)),
+            patch("infra.work_queue.ItemService"),
+            patch("infra.scrape_guard.check_cooldown"),
+            patch("scrapper.steam.client._is_emergency_blocked", side_effect=blocked_value),
+            patch("random.shuffle"),
+            patch("asyncio.sleep", new=AsyncMock()),
+            patch("asyncio.to_thread", side_effect=lambda fn, *a, **kw: fn(*a, **kw)),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_remaining_ids_correct_after_abort(self):
+        """After price_poll aborts at item K, remaining_ids returns items K..N-1."""
+        import infra.work_queue as wq
+        from infra.scrape_guard import remaining_ids
+        from src.domain.models import ScrapeSession
+
+        cids = ["cid-A", "cid-B", "cid-C", "cid-D"]
+        containers = [
+            MagicMock(container_id=cid, container_name="Prisma 2 Case")
+            for cid in cids
+        ]
+
+        call_count = 0
+        async def fetch(name):
+            nonlocal call_count
+            call_count += 1
+            return {"lowest_price": "500 ₸", "volume": "100"} if call_count == 1 else {}
+
+        # False for item 0 (processed ok), True for item 1 (429 hit)
+        blocked = iter([False, True])
+
+        mock_client, patches = self._common_patches(containers, fetch, blocked)
+
+        with ExitStack() as stack:
+            mocks = [stack.enter_context(p) for p in patches]
+            mock_svc = MagicMock(process_new_price=MagicMock(), close=MagicMock())
+            mocks[3].open.return_value = mock_svc
+            await wq._handle_price_poll({"type": "price_poll"})
+
+        with self.Session() as s:
+            sessions = s.query(ScrapeSession).all()
+        assert len(sessions) == 1, "session must NOT be deleted after 429 abort"
+        sess = sessions[0]
+        assert sess.processed_count == 1, "only item 0 was processed before 429"
+        assert remaining_ids(sess.id) == cids[1:], "cid-B, C, D must remain for resume"
+
+    @pytest.mark.asyncio
+    async def test_resumed_job_calls_finish_session(self):
+        """A resumed job (session_id + remaining container_ids) calls finish_session."""
+        import infra.work_queue as wq
+        from infra.scrape_guard import create_session, remaining_ids
+        from infra.scrape_guard import tick_session as real_tick
+
+        # Simulate: first run processed cid-A only
+        cids = ["cid-A", "cid-B", "cid-C"]
+        session_id = create_session("price_poll", cids)
+        real_tick(session_id)  # processed_count → 1
+
+        remaining = remaining_ids(session_id)
+        assert remaining == ["cid-B", "cid-C"]
+
+        containers = [
+            MagicMock(container_id=cid, container_name="Prisma 2 Case")
+            for cid in remaining
+        ]
+        finish_calls: list = []
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.fetch_price_overview = AsyncMock(
+            return_value={"lowest_price": "500 ₸", "volume": "100"}
+        )
+
+        import sys
+        sys.modules.setdefault("config", MagicMock(settings=MagicMock(ratio_floor=1.0)))
+
+        with patch("infra.work_queue.auth_credentials_exist", return_value=True), \
+             patch("infra.work_queue.SteamMarketClient", return_value=mock_client), \
+             patch("infra.work_queue.SessionLocal", return_value=self._make_db_mock(containers)), \
+             patch("infra.work_queue.ItemService") as mock_isvc, \
+             patch("infra.scrape_guard.check_cooldown"), \
+             patch("infra.scrape_guard.tick_session"), \
+             patch("infra.scrape_guard.finish_session", side_effect=finish_calls.append), \
+             patch("scrapper.steam.client._is_emergency_blocked", return_value=False), \
+             patch("random.shuffle"), \
+             patch("asyncio.sleep", new=AsyncMock()), \
+             patch("asyncio.to_thread", side_effect=lambda fn, *a, **kw: fn(*a, **kw)):
+
+            mock_svc = MagicMock(process_new_price=MagicMock(), close=MagicMock())
+            mock_isvc.open.return_value = mock_svc
+
+            await wq._handle_price_poll({
+                "type": "price_poll",
+                "container_ids": remaining,
+                "session_id": session_id,
+            })
+
+        assert finish_calls == [session_id], \
+            "finish_session must be called with the correct session_id on successful resume"

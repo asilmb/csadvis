@@ -90,6 +90,13 @@ def get_queue() -> asyncio.Queue[dict]:
     return _work_queue
 
 
+def is_job_type_active(job_type: str) -> bool:
+    """Return True if a job of this type is currently running or waiting in the queue."""
+    if _state.busy and _state.current_type == job_type:
+        return True
+    return job_type in _queue_shadow
+
+
 def enqueue(job: dict) -> None:
     """Put a job on the queue and register it in the shadow list for status display."""
     _work_queue.put_nowait(job)
@@ -200,6 +207,7 @@ async def _handle_price_poll(job: dict) -> None:
         finish_session,
         tick_session,
     )
+    from scrapper.steam.client import _is_emergency_blocked
     from src.domain.models import DimContainer
 
     try:
@@ -237,6 +245,7 @@ async def _handle_price_poll(job: dict) -> None:
     _state.progress_current = 0
     _state.progress_total = len(names)
     _state.progress_started_at = datetime.now(UTC).replace(tzinfo=None)
+    _rate_limited = False
     async with SteamMarketClient() as client:
         for cid, name in names:
             try:
@@ -302,14 +311,24 @@ async def _handle_price_poll(job: dict) -> None:
                         logger.warning("price_poll: error for %s — %s", name, exc)
 
             _state.progress_current += 1
+            if _is_emergency_blocked():
+                logger.warning(
+                    "price_poll: stopping — Steam 429 block active, session preserved for resume"
+                )
+                _rate_limited = True
+                break
             if session_id is not None:
                 await _asyncio.to_thread(tick_session, session_id)
             # Non-deterministic delay between requests to avoid Steam rate-limiting
             await _asyncio.sleep(random.uniform(8.0, 12.0))
 
+    _remaining = _state.progress_total - _state.progress_current
     _state.progress_current = 0
     _state.progress_total = 0
     _state.progress_started_at = None
+    if _rate_limited:
+        logger.warning("price_poll: aborted due to Steam 429 — %d items unprocessed", _remaining)
+        return
     if session_id is not None:
         await _asyncio.to_thread(finish_session, session_id)
     logger.info("price_poll: done")

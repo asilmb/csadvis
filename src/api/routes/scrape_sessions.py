@@ -47,13 +47,16 @@ def resume_session(session_id: int) -> dict:
         return {"ok": False, "message": "Нет оставшихся элементов — сессия удалена."}
 
     try:
-        from infra.work_queue import enqueue
-        if sess["job_type"] == "price_poll":
+        from infra.work_queue import enqueue, is_job_type_active
+        job_type = sess["job_type"]
+        if is_job_type_active(job_type):
+            return {"ok": False, "message": f"{job_type} уже выполняется — дождись завершения."}
+        if job_type == "price_poll":
             enqueue({"type": "price_poll", "container_ids": ids, "session_id": session_id})
         else:
             # backfill_history: ids are container names
             enqueue({"type": "backfill_history", "names": ids, "session_id": session_id})
-        return {"ok": True, "message": f"Продолжение {sess['job_type']} ({len(ids)} элементов) поставлено в очередь."}
+        return {"ok": True, "message": f"Продолжение {job_type} ({len(ids)} элементов) поставлено в очередь."}
     except asyncio.QueueFull:
         return {"ok": False, "message": "Очередь заполнена — попробуй позже."}
 

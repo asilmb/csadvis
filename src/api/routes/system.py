@@ -88,6 +88,80 @@ async def cancel_task_endpoint(req: CancelTaskRequest) -> dict:
         return {"ok": False, "removed": 0, "error": str(exc)}
 
 
+@router.get("/last-ping")
+def last_ping_endpoint() -> dict:
+    """Return the last ping-steam result stored in Redis."""
+    import json
+
+    from infra.redis_client import get_redis
+    raw = get_redis().get("cs2:system:last_ping")
+    if not raw:
+        return {"status": None, "pinged_at": None}
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {"status": None, "pinged_at": None}
+
+
+@router.post("/ping-steam")
+async def ping_steam_endpoint() -> dict:
+    """
+    Test Steam connectivity: validate token + detect rate-limit block.
+    Persists result to Redis (cs2:system:last_ping) for UI display.
+    """
+    import json
+    import time
+    from datetime import UTC, datetime
+
+    from infra.redis_client import get_redis
+    from infra.steam_credentials import auth_credentials_exist
+
+    redis = get_redis()
+    now = datetime.now(UTC).strftime("%d.%m.%Y %H:%M")
+
+    def _save(result: dict) -> dict:
+        redis.set("cs2:system:last_ping", json.dumps(result), ex=86400)
+        return result
+
+    if not auth_credentials_exist():
+        return _save({"status": "no_credentials", "pinged_at": now})
+
+    # Check block before making any request — avoids consuming a request slot
+    block_raw = redis.get("STEALTH_BLOCK_EXPIRES")
+    if block_raw:
+        ttl = redis.ttl("STEALTH_BLOCK_EXPIRES")
+        remaining_s = max(0, ttl) if ttl > 0 else 0
+        blocked_until = (
+            datetime.fromtimestamp(time.time() + remaining_s, tz=UTC).strftime("%H:%M UTC")
+            if remaining_s > 0 else "скоро"
+        )
+        return _save({"status": "blocked", "pinged_at": now, "blocked_until": blocked_until, "remaining_s": remaining_s})
+
+    try:
+        from scrapper.steam.client import SteamMarketClient
+        async with SteamMarketClient() as client:
+            data = await client.fetch_price_overview("CS20 Case")
+
+        block_raw2 = redis.get("STEALTH_BLOCK_EXPIRES")
+        if block_raw2 or not data:
+            ttl = redis.ttl("STEALTH_BLOCK_EXPIRES")
+            remaining_s = max(0, ttl) if ttl > 0 else 0
+            blocked_until = (
+                datetime.fromtimestamp(time.time() + remaining_s, tz=UTC).strftime("%H:%M UTC")
+                if remaining_s > 0 else "неизвестно"
+            )
+            return _save({"status": "blocked", "pinged_at": now, "blocked_until": blocked_until, "remaining_s": remaining_s})
+        return _save({"status": "ok", "pinged_at": now})
+
+    except RuntimeError as exc:
+        msg = str(exc)
+        if "exist" in msg.lower() or "credential" in msg.lower():
+            return _save({"status": "no_credentials", "pinged_at": now})
+        return _save({"status": "error", "pinged_at": now, "detail": msg[:120]})
+    except Exception as exc:
+        return _save({"status": "error", "pinged_at": now, "detail": str(exc)[:120]})
+
+
 @router.post("/update-cookie")
 def update_cookie_endpoint(req: UpdateCookieRequest) -> dict:
     value = req.value.strip()

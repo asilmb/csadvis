@@ -22,6 +22,34 @@ _LABEL = {"color": _MUTED, "fontSize": "11px", "textTransform": "uppercase", "le
 _VALUE = {"color": _TEXT, "fontSize": "20px", "fontWeight": "600"}
 
 
+def _ping_label(last_ping: dict | None) -> list:
+    """Format last ping result as inline Dash children."""
+    if not last_ping or not last_ping.get("status"):
+        return []
+    status = last_ping["status"]
+    pinged_at = last_ping.get("pinged_at", "")
+    if status == "ok":
+        return [html.Span(f"✓ {pinged_at}", style={"color": _GREEN, "fontSize": "11px"})]
+    if status == "blocked":
+        blocked_until = last_ping.get("blocked_until", "?")
+        remaining_s = last_ping.get("remaining_s", 0)
+        if remaining_s >= 3600:
+            r_str = f"{remaining_s // 3600}ч {(remaining_s % 3600) // 60}м"
+        elif remaining_s >= 60:
+            r_str = f"{remaining_s // 60} мин"
+        else:
+            r_str = f"{remaining_s} сек"
+        return [
+            html.Span(f"⛔ до {blocked_until}", style={"color": _RED, "fontSize": "11px"}),
+            html.Span(f"  ({r_str})", style={"color": _MUTED, "fontSize": "10px"}),
+            html.Br(),
+            html.Span(pinged_at, style={"color": _MUTED, "fontSize": "10px"}),
+        ]
+    if status == "no_credentials":
+        return [html.Span(f"— нет токена  {pinged_at}", style={"color": _MUTED, "fontSize": "11px"})]
+    return [html.Span(f"⚠ {pinged_at}", style={"color": _ORANGE, "fontSize": "11px"})]
+
+
 def _badge(text: str, color: str) -> html.Span:
     return html.Span(
         text,
