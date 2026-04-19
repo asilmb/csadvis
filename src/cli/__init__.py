@@ -1,4 +1,4 @@
 """CS2 Market Analytics CLI package."""
-from cli.__main__ import main, build_parser
+from cli.__main__ import build_parser, main
 
-__all__ = ["main", "build_parser"]
+__all__ = ["build_parser", "main"]

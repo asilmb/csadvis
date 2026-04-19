@@ -26,8 +26,6 @@ async def run_market_sync() -> dict:
 
     Returns a summary dict: {"status": "ok", "scraped": N, "inserted": M}.
     """
-    from src.domain.connection import SessionLocal
-    from scrapper.db_writer import write_new_containers
     from scrapper.state import mark_done
     from scrapper.steam_market_scraper import scrape_all_containers
 
@@ -50,22 +48,20 @@ async def run_market_sync() -> dict:
     mark_done()
 
     if inserted:
+        logger.info("run_market_sync: %d new container(s) added", inserted)
         try:
-            from infra.work_queue import get_queue
-            get_queue().put_nowait({"type": "backfill_history"})
-            logger.info("run_market_sync: %d new container(s) — enqueued backfill_history", inserted)
-        except asyncio.QueueFull:
-            logger.warning("run_market_sync: queue full — backfill_history not enqueued")
-        except Exception as exc:
-            logger.warning("run_market_sync: could not enqueue backfill_history: %s", exc)
+            from src.ui.helpers import invalidate_containers_cache
+            invalidate_containers_cache()
+        except Exception:
+            pass
 
     logger.info("run_market_sync: done — scraped=%d inserted=%d", len(containers), inserted)
     return {"status": "ok", "scraped": len(containers), "inserted": inserted}
 
 
 def _write_containers(containers) -> int:
-    from src.domain.connection import SessionLocal
     from scrapper.db_writer import write_new_containers
+    from src.domain.connection import SessionLocal
     with SessionLocal() as db:
         count = write_new_containers(db, containers)
         db.commit()
@@ -116,8 +112,11 @@ async def run_inventory_sync(steam_id: str | None = None) -> dict:
 
 def _persist_inventory(items: list[dict]):
     from src.domain.connection import SessionLocal
-    from src.domain.sql_repositories import SqlAlchemyInventoryRepository, SqlAlchemyPositionRepository
     from src.domain.reconciler import PositionReconciler
+    from src.domain.sql_repositories import (
+        SqlAlchemyInventoryRepository,
+        SqlAlchemyPositionRepository,
+    )
 
     with SessionLocal() as db:
         inv_repo = SqlAlchemyInventoryRepository(db)
@@ -136,7 +135,7 @@ def _persist_inventory(items: list[dict]):
     return rec
 
 
-async def run_backfill_history(names: list[str] | None = None) -> dict:
+async def run_backfill_history(names: list[str] | None = None, session_id: int | None = None) -> dict:
     """
     Fetch and persist daily price history for containers.
 
@@ -144,15 +143,16 @@ async def run_backfill_history(names: list[str] | None = None) -> dict:
            When None or empty, all non-blacklisted containers are processed.
     """
     from sqlalchemy import func
-    from src.domain.connection import SessionLocal
-    from src.domain.models import DimContainer, FactContainerPrice
+
     from scrapper.steam.client import SteamMarketClient
     from scrapper.steam.formatter import InvalidHashNameError, to_api_name
+    from src.domain.connection import SessionLocal
+    from src.domain.models import DimContainer, FactContainerPrice
 
     names_filter: list[str] = list(names or [])
 
     with SessionLocal() as db:
-        q = db.query(DimContainer).filter(DimContainer.is_blacklisted == False)  # noqa: E712
+        q = db.query(DimContainer).filter(DimContainer.is_blacklisted == False)
         if names_filter:
             q = q.filter(DimContainer.container_name.in_(names_filter))
         containers = q.all()
@@ -177,9 +177,16 @@ async def run_backfill_history(names: list[str] | None = None) -> dict:
         logger.info("backfill_history: no containers")
         return {"status": "ok", "saved": 0, "errors": 0}
 
+    import random as _random
+
+    from infra.scrape_guard import create_session, finish_session, tick_session
     ordered_names: list[str] = (
         [n for n in names_filter if n in id_map] if names_filter else list(id_map.keys())
     )
+    _random.shuffle(ordered_names)
+
+    if session_id is None:
+        session_id = await asyncio.to_thread(create_session, "backfill_history", ordered_names)
 
     logger.info("backfill_history: processing %d containers", len(ordered_names))
 
@@ -226,6 +233,9 @@ async def run_backfill_history(names: list[str] | None = None) -> dict:
             logger.error("backfill_history: DB write error for %s — %s", name, exc)
             errors += 1
 
+        await asyncio.to_thread(tick_session, session_id)
+
+    await asyncio.to_thread(finish_session, session_id)
     logger.info("backfill_history: done — saved=%d errors=%d", saved_total, errors)
     return {"status": "ok", "saved": saved_total, "errors": errors}
 

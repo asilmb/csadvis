@@ -66,7 +66,7 @@ class ScrapedItem:
 class ScrapedContainer:
     name: str
     container_type: str
-    page_url: str
+    page_url: str = ""
     items: list[ScrapedItem] = field(default_factory=list)
 
 
@@ -208,7 +208,7 @@ async def scrape_all_containers() -> list[ScrapedContainer]:
                     logger.info("[SCRAPER] tag=%s total_count=%d", type_tag, total_count)
 
                 # Progress: "Scraping: Weapon Cases (18/120)"
-                await _report(f"Scraping: {raw_ctype} ({start}/{total_count or '?'})")
+                logger.info("[SCRAPER] Scraping: %s (%d/%s)", raw_ctype, start, total_count or "?")
 
                 results = data.get("results") or []
                 if not results:

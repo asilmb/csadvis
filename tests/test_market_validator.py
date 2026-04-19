@@ -20,7 +20,6 @@ Covers:
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import create_engine
@@ -33,7 +32,6 @@ from src.domain.models import (
     FactContainerPrice,
 )
 from src.domain.sql_repositories import SqlAlchemyPriceRepository
-
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
 

@@ -28,7 +28,7 @@ Usage:
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # Steam Market net multiplier: seller receives ~86.9% of sale price (13.1% fee)
 STEAM_NET_MULTIPLIER: float = 0.869
@@ -142,8 +142,8 @@ class ArmoryAdvisor:
 
         total_credits = sum(r.credits_required for r in rewards)
 
-        # total_net: None if any reward lacks a price.
-        if any(r.net_proceeds is None for r in rewards):
+        # total_net: None if no rewards or any reward lacks a price.
+        if not rewards or any(r.net_proceeds is None for r in rewards):
             total_net: float | None = None
         else:
             total_net = sum(r.net_proceeds for r in rewards)  # type: ignore[misc]

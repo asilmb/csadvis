@@ -18,9 +18,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from src.domain.models import Base, Position, PositionStatus
-from src.domain.sql_repositories import PositionDTO, SqlAlchemyPositionRepository
 from src.domain.reconciler import PositionReconciler, ReconcileResult
-
+from src.domain.sql_repositories import SqlAlchemyPositionRepository
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
 

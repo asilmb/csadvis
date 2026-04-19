@@ -42,7 +42,6 @@ from src.domain.models import (
     PositionStatus,
 )
 
-
 # ─── Position.open() ──────────────────────────────────────────────────────────
 
 

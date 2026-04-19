@@ -92,7 +92,6 @@ class TestDispatch:
 class TestPost:
     def test_calls_httpx_post_with_json(self):
         """_post must call httpx.Client.post with the correct URL and JSON payload."""
-        import httpx
 
         from infra.webhook_dispatcher import _post
 

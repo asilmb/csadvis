@@ -46,8 +46,8 @@ def cmd_init(args) -> None:
         sys.exit(1)
 
     # ── DB init + seed ────────────────────────────────────────────────────────
-    from src.domain.connection import SessionLocal, init_db
     from seed.data import seed_database
+    from src.domain.connection import SessionLocal, init_db
 
     print("[INIT] init_db ......... ", end="", flush=True)
     init_db()

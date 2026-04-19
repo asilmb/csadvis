@@ -30,11 +30,11 @@ All prices are plain floats — no currency metadata.
 
 from __future__ import annotations
 
+import math
+
 from config import settings
 from src.domain.events import LiquidityWarning
 from src.domain.specifications import VolumeAbove
-
-_KEY_PRICE = settings.key_price  # standard CS2 case key price (overridable via .env)
 
 # Price-ratio thresholds for buy/sell signal
 _BUY_RATIO_THRESHOLD = 0.85  # price < 85% of baseline  → cheap (buy point)
@@ -71,7 +71,7 @@ def compute_investment_signal(
     mean = mean_price
     qty = quantity
 
-    if not current:
+    if not current or (isinstance(current, float) and math.isnan(current)):
         return {
             "verdict": "NO DATA",
             "current_price": None,
@@ -85,7 +85,7 @@ def compute_investment_signal(
     # Baseline price
     is_weapon_case = container_type not in _CAPSULE_TYPES
     if is_weapon_case:
-        baseline = max(base_cost - _KEY_PRICE, 25.0)
+        baseline = max(base_cost - settings.key_price, 25.0)
     else:
         baseline = max(base_cost, 25.0)
 

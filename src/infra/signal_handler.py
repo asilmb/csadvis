@@ -15,9 +15,9 @@ from __future__ import annotations
 import logging
 
 from config import settings
-from src.domain.events import AuthError, LiquidityWarning, PriceAlert, SuperDealDetected
 from infra.event_logger import log_event
 from infra.webhook_dispatcher import dispatch
+from src.domain.events import AuthError, LiquidityWarning, PriceAlert, SuperDealDetected
 
 logger = logging.getLogger(__name__)
 

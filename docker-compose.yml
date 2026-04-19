@@ -92,10 +92,25 @@ services:
     command: ["scrapper"]
     restart: "no"
 
-  # ── Worker (Celery background tasks) ─────────────────────────────────────────
-  worker:
-    <<: *app
-    command: ["worker"]
+  # ── Test runner ───────────────────────────────────────────────────────────────
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: test
+    image: cs2-test:latest
+    env_file: .env
+    environment:
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+    profiles:
+      - test
 
 networks:
   backend:

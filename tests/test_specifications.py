@@ -22,7 +22,7 @@ from src.domain.specifications import (
     VolumeAbove,
     ZScoreBelow,
 )
-from src.domain.value_objects import Amount, ROI
+from src.domain.value_objects import ROI, Amount
 
 # ─── Test helpers ─────────────────────────────────────────────────────────────
 

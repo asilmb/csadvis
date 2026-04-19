@@ -60,7 +60,8 @@ async def cancel_task_endpoint(req: CancelTaskRequest) -> dict:
     """
     try:
         import asyncio as _asyncio
-        from infra.work_queue import get_queue
+
+        from infra.work_queue import _queue_shadow, enqueue, get_queue
         q = get_queue()
         removed = 0
         kept: list[dict] = []
@@ -74,9 +75,10 @@ async def cancel_task_endpoint(req: CancelTaskRequest) -> dict:
                     kept.append(job)
             except _asyncio.QueueEmpty:
                 break
+        _queue_shadow.clear()
         for job in kept:
             try:
-                q.put_nowait(job)
+                enqueue(job)
             except _asyncio.QueueFull:
                 pass
         logger.info("cancel_task: removed=%d job_type=%r", removed, req.job_type)
@@ -108,9 +110,10 @@ def update_cookie_endpoint(req: UpdateCookieRequest) -> dict:
 
     if req.session_note.strip():
         try:
+            from datetime import UTC, datetime
+
             from src.domain.connection import SessionLocal as _SL
             from src.domain.models import SystemSettings
-            from datetime import UTC, datetime
             with _SL() as _db:
                 row = _db.get(SystemSettings, "last_auth_note")
                 now = datetime.now(UTC).replace(tzinfo=None)

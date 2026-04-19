@@ -17,9 +17,9 @@ from dash import html
 from config import settings as _settings
 from src.domain.connection import SessionLocal
 from src.domain.models import DimContainer
+from src.domain.portfolio import get_portfolio_data
 from ui.cache import cache
 from ui.theme import COLORS
-from src.domain.portfolio import get_portfolio_data
 
 # ─── Fee constants ─────────────────────────────────────────────────────────────
 _FEE_DIV = _settings.steam_fee_divisor  # 1.15
@@ -89,12 +89,36 @@ def _get_current_steam_prices() -> dict:
     return get_portfolio_data()
 
 
-def _get_containers() -> list:
-    db = SessionLocal()
-    try:
-        return db.query(DimContainer).all()
-    finally:
-        db.close()
+_containers_cache: list = []
+_containers_bl_cache: list = []
+
+
+def _get_containers(force: bool = False, blacklisted: bool = False) -> list:
+    global _containers_cache, _containers_bl_cache
+    if blacklisted:
+        if not force and _containers_bl_cache:
+            return _containers_bl_cache
+        db = SessionLocal()
+        try:
+            _containers_bl_cache = db.query(DimContainer).filter(DimContainer.is_blacklisted == 1).all()
+            return _containers_bl_cache
+        finally:
+            db.close()
+    else:
+        if not force and _containers_cache:
+            return _containers_cache
+        db = SessionLocal()
+        try:
+            _containers_cache = db.query(DimContainer).filter(DimContainer.is_blacklisted == 0).all()
+            return _containers_cache
+        finally:
+            db.close()
+
+
+def invalidate_containers_cache() -> None:
+    global _containers_cache, _containers_bl_cache
+    _containers_cache = []
+    _containers_bl_cache = []
 
 
 def _get_container_db_map() -> dict:
@@ -294,6 +318,7 @@ def _scheduler_badge() -> html.Span:
     """Return a Celery Beat health badge (checks Redis connectivity)."""
     try:
         import os
+
         import redis as _redis_lib
         _url = os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0")
         _redis_lib.from_url(_url, socket_connect_timeout=1).ping()

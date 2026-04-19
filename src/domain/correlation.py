@@ -200,3 +200,19 @@ def compute_correlation_matrix(
             )
 
     return result
+
+
+def check_portfolio_correlation(
+    name1: str | None,
+    name2: str | None,
+    pairs: list[tuple[str, str, float]],
+    threshold: float = _HIGH_CORR_THRESHOLD,
+) -> str | None:
+    """Return a warning string when |r| >= threshold for (name1, name2), else None."""
+    if not name1 or not name2 or name1 == name2:
+        return None
+    for n1, n2, r in pairs:
+        if (n1 == name1 and n2 == name2) or (n1 == name2 and n2 == name1):
+            if abs(r) >= threshold:
+                return f"{name1} и {name2}: высокая корреляция (r = {r:.2f})"
+    return None

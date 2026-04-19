@@ -123,15 +123,26 @@ def create_dash_app() -> dash.Dash:
                         },
                         children=[
                             html.Div(
-                                "CONTAINERS",
-                                style={
-                                    "color": _MUTED,
-                                    "letterSpacing": "2px",
-                                    "fontSize": "10px",
-                                    "fontWeight": "bold",
-                                    "marginBottom": "8px",
-                                },
+                                [
+                                    html.Span("CONTAINERS", style={
+                                        "color": _MUTED,
+                                        "letterSpacing": "2px",
+                                        "fontSize": "10px",
+                                        "fontWeight": "bold",
+                                    }),
+                                    dbc.Button(
+                                        "Скрытые",
+                                        id="btn-toggle-blacklist-view",
+                                        size="sm",
+                                        color="danger",
+                                        outline=True,
+                                        n_clicks=0,
+                                        style={"fontSize": "10px", "padding": "1px 6px", "lineHeight": "1.4"},
+                                    ),
+                                ],
+                                style={"display": "flex", "justifyContent": "space-between", "alignItems": "center", "marginBottom": "8px"},
                             ),
+                            dcc.Store(id="blacklist-view-store", data=False),
                             dbc.Input(
                                 id="sidebar-search",
                                 placeholder="Search...",
@@ -141,9 +152,30 @@ def create_dash_app() -> dash.Dash:
                                     "backgroundColor": _BG,
                                     "color": _TEXT,
                                     "borderColor": _BORDER,
-                                    "marginBottom": "6px",
+                                    "marginBottom": "4px",
                                     "fontSize": "12px",
                                 },
+                            ),
+                            dcc.Dropdown(
+                                id="sidebar-sort",
+                                options=[
+                                    {"label": "Новые сначала", "value": "newest"},
+                                    {"label": "Старые сначала", "value": "oldest"},
+                                    {"label": "Дешевые сначала", "value": "price_asc"},
+                                    {"label": "Дорогие сначала", "value": "price_desc"},
+                                    {"label": "Большой объём", "value": "volume_desc"},
+                                    {"label": "Малый объём", "value": "volume_asc"},
+                                ],
+                                value="newest",
+                                clearable=False,
+                                style={
+                                    "backgroundColor": _BG,
+                                    "color": _TEXT,
+                                    "borderColor": _BORDER,
+                                    "fontSize": "11px",
+                                    "marginBottom": "6px",
+                                },
+                                className="sidebar-sort-dropdown",
                             ),
                             html.Div(
                                 id="container-list",
@@ -287,6 +319,65 @@ def create_dash_app() -> dash.Dash:
             ),
             # Cookie status polling — 30s interval
             dcc.Interval(id="cookie-status-interval", interval=30_000, n_intervals=0),
+            # Auth-pause polling — 3s, always on, checks worker PAUSED_AUTH state
+            dcc.Interval(id="auth-check-interval", interval=3_000, n_intervals=0),
+            # Auth-Pause Modal — opens when worker enters PAUSED_AUTH (no credentials)
+            dbc.Modal(
+                id="auth-modal",
+                is_open=False,
+                backdrop="static",
+                keyboard=False,
+                children=[
+                    dbc.ModalHeader(
+                        dbc.ModalTitle([
+                            html.I(className="fa fa-lock me-2"),
+                            "Требуется авторизация Steam",
+                        ]),
+                        close_button=False,
+                    ),
+                    dbc.ModalBody([
+                        dbc.Alert(
+                            [
+                                html.I(className="fa fa-exclamation-triangle me-2"),
+                                "Воркер приостановлен: Steam вернул ошибку авторизации. "
+                                "Введи актуальные cookies чтобы продолжить парсинг.",
+                            ],
+                            color="warning",
+                            className="mb-3",
+                            style={"fontSize": "13px"},
+                        ),
+                        dbc.Label("steamLoginSecure", html_for="auth-login-secure-input"),
+                        dbc.Input(
+                            id="auth-login-secure-input",
+                            type="password",
+                            placeholder="76561198…%7C%7C…",
+                            debounce=False,
+                            className="mb-3",
+                        ),
+                        dbc.Label("Session ID", html_for="auth-session-id-input"),
+                        dbc.Input(
+                            id="auth-session-id-input",
+                            type="text",
+                            placeholder="a1b2c3d4e5f6…",
+                            debounce=False,
+                            className="mb-2",
+                        ),
+                        html.Small(
+                            "DevTools → Application → Cookies → steamcommunity.com",
+                            className="text-muted d-block mb-2",
+                        ),
+                        html.Div(id="auth-modal-status", className="text-danger mt-1", style={"fontSize": "12px"}),
+                    ]),
+                    dbc.ModalFooter(
+                        dbc.Button(
+                            [html.I(className="fa fa-unlock me-2"), "Отправить и разблокировать воркер"],
+                            id="auth-submit-btn",
+                            color="primary",
+                            n_clicks=0,
+                        ),
+                    ),
+                ],
+            ),
             # Cookie Hot-Swap Modal (PV-43) — opens automatically when cookie is EXPIRED
             dbc.Modal(
                 id="cookie-modal",

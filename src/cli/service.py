@@ -1,9 +1,9 @@
 """
 Логика запуска сервисов.
 """
+import logging
 import os
 import threading
-import logging
 from pathlib import Path
 
 from infra.logger import configure_logging
@@ -17,6 +17,7 @@ LOG_PATH = Path(os.getenv("LOG_DIR", str(_PROJECT_ROOT / "storage" / "logs")))
 def cmd_start(args):
     """Запуск API и Dashboard."""
     import uvicorn
+
     from src.domain.connection import init_db
     from ui.app import create_dash_app
     

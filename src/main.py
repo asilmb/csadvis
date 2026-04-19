@@ -44,25 +44,24 @@ def _cmd_api() -> None:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+        # Fail fast if STEAM_DATA_KEY is missing or malformed — do not start
+        # the server with a broken credential store.
+        try:
+            from infra.steam_credentials import _get_manager
+            _get_manager()
+            logger.info("credential_store_ok", service="api")
+        except RuntimeError as exc:
+            logger.critical("credential_store_init_failed", service="api", error=str(exc))
+            raise SystemExit(1) from exc
+
         logger.info("db_init", service="api")
         init_db()
         with SessionLocal() as db:
             seed_database(db)
 
-        from infra.work_queue import supervised_worker, get_queue
+        from infra.work_queue import supervised_worker
         worker_task = asyncio.create_task(supervised_worker(), name="work_queue_worker")
 
-        # Enqueue initial price poll if there are active containers in the DB
-        try:
-            from src.domain.connection import SessionLocal as _SL
-            from src.domain.models import DimContainer
-            with _SL() as _db:
-                active_count = _db.query(DimContainer).filter(DimContainer.is_blacklisted == 0).count()
-            if active_count > 0:
-                get_queue().put_nowait({"type": "price_poll"})
-                logger.info("startup_enqueue", service="api", job="price_poll", containers=active_count)
-        except Exception as _exc:
-            logger.warning("startup_enqueue_failed", service="api", error=str(_exc))
 
         logger.info("api_ready", service="api", host=settings.api_host, port=settings.api_port)
 

@@ -41,15 +41,15 @@ from datetime import UTC, datetime, timedelta
 import structlog
 
 from infra.redis_client import get_redis
-from infra.steam_credentials import get_login_secure, get_session_id
+from infra.steam_credentials import _get_manager as _cred_manager
 from scrapper.steam.formatter import InvalidHashNameError, to_api_name
-from scrapper.steam_rate_limit import request_delay
 from scrapper.steam.parser import (
     parse_history_response,
     parse_nameid_html,
     parse_order_book_response,
     parse_overview_response,
 )
+from scrapper.steam_rate_limit import request_delay
 
 logger = structlog.get_logger()
 
@@ -140,14 +140,19 @@ def _trigger_emergency_stop(item_name: str, attempt: int = 0) -> int:
         backoff_seconds=ttl,
         blocked_until=blocked_until.strftime("%H:%M UTC"),
     )
+    try:
+        from infra.scrape_guard import record_429
+        record_429(triggered_by=item_name)
+    except Exception:
+        pass
     return ttl
 
 
 def _publish_auth_error(item_name: str, status_code: int) -> None:
     """Notify about Steam auth error. Direct call — no event bus."""
     try:
-        from src.domain.events import AuthError
         from infra.signal_handler import notify_auth_error
+        from src.domain.events import AuthError
 
         notify_auth_error(
             AuthError(
@@ -167,16 +172,14 @@ class SteamMarketClient:
     """Async Steam Market client — TLS-impersonated, session-persistent."""
 
     def __init__(self, attempt: int = 0) -> None:
-        cookie = get_login_secure()
-        if not cookie:
+        # Credentials are NOT stored on the instance — they are read from the
+        # encrypted store and used exclusively within _ensure_session() local scope.
+        if not _cred_manager().credentials_exist():
             raise RuntimeError(
-                "No Steam cookie set — open the dashboard and enter your steamLoginSecure cookie."
+                "No Steam credentials set — open the dashboard and enter your "
+                "steamLoginSecure and Session ID."
             )
-        self._login_secure: str = cookie
-        self._session_id_cfg: str = get_session_id()
         self._session = None   # curl_cffi.requests.AsyncSession — created lazily
-        # Celery retry index passed in by the caller so the exponential backoff
-        # TTL escalates correctly across task retries (0 = first attempt).
         self._attempt: int = attempt
 
     # ── Cookie cache ──────────────────────────────────────────────────────────
@@ -229,12 +232,17 @@ class SteamMarketClient:
 
         from curl_cffi.requests import AsyncSession
 
-        # Start with any cookies persisted from a prior batch, then overlay
-        # the authoritative auth cookie from the credential store so it always wins.
+        # Decrypt credentials immediately before session creation.
+        # login_secure and session_id exist only in this method's local scope
+        # and are never assigned to instance attributes or logged.
+        login_secure, session_id = _cred_manager().get_credentials()
+        if not login_secure:
+            raise RuntimeError("Steam credentials missing — cannot create session.")
+
         cookies = self._load_persisted_cookies()
-        cookies["steamLoginSecure"] = self._login_secure
-        if self._session_id_cfg:
-            cookies["sessionid"] = self._session_id_cfg
+        cookies["steamLoginSecure"] = login_secure
+        if session_id:
+            cookies["sessionid"] = session_id
 
         self._session = AsyncSession(impersonate=_IMPERSONATE, cookies=cookies)
         logger.debug(
@@ -243,6 +251,9 @@ class SteamMarketClient:
             impersonate=_IMPERSONATE,
             cookies=list(cookies.keys()),
         )
+
+        # Wipe local references so plaintext doesn't linger on the stack frame.
+        del login_secure, session_id
 
     async def __aenter__(self) -> SteamMarketClient:
         await self._ensure_session()
@@ -338,6 +349,7 @@ class SteamMarketClient:
         if resp.status_code == 403:
             logger.warning("steam_http_403", service="steam_client", name=market_hash_name)
             _publish_auth_error(market_hash_name, 403)
+            _cred_manager().revoke()
             return []
         if resp.status_code in (404, 500):
             raise InvalidHashNameError(api_name, resp.status_code)
@@ -379,8 +391,9 @@ class SteamMarketClient:
                 status_code=resp.status_code,
                 name=market_hash_name,
             )
+            _cred_manager().revoke()
             _publish_auth_error(market_hash_name, resp.status_code)
-            return {}
+            raise RuntimeError(f"Steam auth error {resp.status_code} for {market_hash_name}")
         if resp.status_code in (404, 500):
             raise InvalidHashNameError(api_name, resp.status_code)
         if resp.status_code != 200:

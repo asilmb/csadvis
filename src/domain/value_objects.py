@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 import functools
+import math
 from dataclasses import dataclass
+
+
+def _round_half_up(x: float) -> int:
+    if x >= 0:
+        return math.floor(x + 0.5)
+    return math.ceil(x - 0.5)
 
 
 @functools.total_ordering
@@ -12,7 +19,7 @@ class Amount:
     amount: int
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "amount", round(self.amount))
+        object.__setattr__(self, "amount", _round_half_up(self.amount))
 
     def __add__(self, other: Amount) -> Amount:
         if not isinstance(other, Amount):
@@ -27,7 +34,7 @@ class Amount:
     def __mul__(self, factor: int | float) -> Amount:
         if not isinstance(factor, (int, float)):
             return NotImplemented
-        return Amount(round(self.amount * factor))
+        return Amount(_round_half_up(self.amount * factor))
 
     def __rmul__(self, factor: int | float) -> Amount:
         return self.__mul__(factor)
@@ -35,7 +42,7 @@ class Amount:
     def __truediv__(self, divisor: int | float) -> Amount:
         if not isinstance(divisor, (int, float)):
             return NotImplemented
-        return Amount(round(self.amount / divisor))
+        return Amount(_round_half_up(self.amount / divisor))
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Amount):

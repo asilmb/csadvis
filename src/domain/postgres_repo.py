@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import List
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -19,7 +18,7 @@ class PostgresRepository(AbstractRepository):
     def __init__(self, db: Session) -> None:
         self._db = db
 
-    def get_all_containers(self) -> List[ContainerDTO]:
+    def get_all_containers(self) -> list[ContainerDTO]:
         from src.domain.models import DimContainer
 
         rows = self._db.execute(select(DimContainer)).scalars().all()
@@ -42,6 +41,7 @@ class PostgresRepository(AbstractRepository):
         timestamp: datetime,
     ) -> None:
         from sqlalchemy.dialects.postgresql import insert
+
         from src.domain.models import FactContainerPrice
 
         stmt = (
@@ -76,7 +76,7 @@ class PostgresRepository(AbstractRepository):
         )
         self._db.execute(stmt)
 
-    def get_price_history(self, item_id: str, days: int) -> List[PriceDTO]:
+    def get_price_history(self, item_id: str, days: int) -> list[PriceDTO]:
         from src.domain.models import FactContainerPrice
 
         cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=days)
@@ -100,7 +100,7 @@ class PostgresRepository(AbstractRepository):
             for r in rows
         ]
 
-    def get_market_sync_list(self) -> List[str]:
+    def get_market_sync_list(self) -> list[str]:
         from src.domain.models import DimContainer
 
         stmt = select(DimContainer.container_name).where(DimContainer.is_blacklisted == 0)
@@ -118,7 +118,7 @@ class PostgresRepository(AbstractRepository):
         if container.error_count >= 3:
             container.is_blacklisted = 1
 
-    def get_prices_since(self, cutoff: datetime) -> List[tuple]:
+    def get_prices_since(self, cutoff: datetime) -> list[tuple]:
         from src.domain.models import FactContainerPrice
 
         stmt = (
@@ -131,7 +131,7 @@ class PostgresRepository(AbstractRepository):
         rows = self._db.execute(stmt).all()
         return [(str(r.container_id), float(r.price)) for r in rows]
 
-    def get_container_id_by_name(self, container_name: str) -> "str | None":
+    def get_container_id_by_name(self, container_name: str) -> str | None:
         from src.domain.models import DimContainer
 
         stmt = select(DimContainer.container_id).where(
@@ -140,7 +140,7 @@ class PostgresRepository(AbstractRepository):
         result = self._db.execute(stmt).scalar_one_or_none()
         return str(result) if result is not None else None
 
-    def get_max_timestamps_by_container(self) -> "dict[str, datetime]":
+    def get_max_timestamps_by_container(self) -> dict[str, datetime]:
         from sqlalchemy import func
 
         from src.domain.models import FactContainerPrice
@@ -152,10 +152,11 @@ class PostgresRepository(AbstractRepository):
         rows = self._db.execute(stmt).all()
         return {str(cid): ts for cid, ts in rows if ts is not None}
 
-    def bulk_add_prices(self, rows: "list[dict]") -> None:
+    def bulk_add_prices(self, rows: list[dict]) -> None:
         if not rows:
             return
         from sqlalchemy.dialects.postgresql import insert
+
         from src.domain.models import FactContainerPrice
 
         values = [

@@ -100,11 +100,11 @@ class TestComputeTradeAdvice:
             assert "SELL at" in result["hold_detail"]
 
     def test_old_prices_excluded_from_90d_window(self) -> None:
-        # Mix: 5 recent prices at 2400₸ + 20 old prices at 50₸
-        recent = [{"timestamp": _ts(i), "price": 2400.0} for i in range(5)]
+        # Mix: 20 recent prices at 2400₸ + 20 old prices at 50₸
+        recent = [{"timestamp": _ts(i), "price": 2400.0} for i in range(20)]
         old = [{"timestamp": _ts(100 + i), "price": 50.0} for i in range(20)]
         result = _patched_advice("TestCase", 480.0, "Weapon Case", recent + old)
-        # 5 >= 5 → uses history
+        # 20 >= 20 → uses history
         assert result["data_source"] == "90d_steam"
         # Targets should reflect the 2400₸ recent prices, not 50₸ old ones
         assert result["buy_target"] > 480

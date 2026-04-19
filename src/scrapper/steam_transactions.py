@@ -229,6 +229,7 @@ def _parse_history_html(data: dict) -> list[dict]:
     Only called when 'events' key is absent from the response.
     """
     import re
+
     from scrapper.steam_wallet import _parse_amount
 
     results_html = data.get("html") or data.get("results_html", "")

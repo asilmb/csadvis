@@ -28,3 +28,4 @@ redis>=5.0.0
 flask-caching>=2.3.0
 structlog>=24.1.0
 prometheus-client>=0.20.0
+cryptography>=42.0.0

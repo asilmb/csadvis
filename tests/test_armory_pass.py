@@ -6,8 +6,8 @@ import math
 
 import pytest
 
-from src.domain.value_objects import Amount, ROI
 from src.domain.armory_pass import ArmoryPassResult, compare_armory_pass
+from src.domain.value_objects import ROI, Amount
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
 

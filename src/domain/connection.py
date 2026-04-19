@@ -17,9 +17,9 @@ import os
 from collections.abc import Generator
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError, InternalError
+from sqlalchemy.orm import Session, sessionmaker
 
 logger = logging.getLogger(__name__)
 

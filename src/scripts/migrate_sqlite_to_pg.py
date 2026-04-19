@@ -112,7 +112,7 @@ def migrate(dry_run: bool = False, batch_size: int = 500) -> None:
                     "if_not_exists => TRUE, migrate_data => TRUE)"
                 ))
                 conn.commit()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 print(f"[Migrate] Hypertable note: {exc}")
 
     # ── Phase 1: containers ────────────────────────────────────────────────────
@@ -156,7 +156,7 @@ def migrate(dry_run: bool = False, batch_size: int = 500) -> None:
     skipped_prices  = 0
     batch: list[dict] = []
 
-    def _flush(pg_session_factory: "sessionmaker") -> int:
+    def _flush(pg_session_factory: sessionmaker) -> int:
         if not batch:
             return 0
         with pg_session_factory() as sess:

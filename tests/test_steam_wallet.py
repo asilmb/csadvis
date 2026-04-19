@@ -112,7 +112,10 @@ def _settings_with_cookie(cookie: str = "valid_cookie") -> MagicMock:
 
 class TestFetchWalletBalance:
     def test_no_cookie_returns_none(self) -> None:
-        with patch("scrapper.steam_wallet.settings", _settings_with_cookie("")):
+        with (
+            patch("scrapper.steam_wallet.get_login_secure", return_value=""),
+            patch("scrapper.steam_wallet.read_cookie_from_chrome", return_value=None),
+        ):
             balance, msg = fetch_wallet_balance()
         assert balance is None
         assert msg == "NO_COOKIE"
@@ -120,7 +123,7 @@ class TestFetchWalletBalance:
     def test_parses_market_wallet_span(self) -> None:
         html = '<span id="marketWalletBalanceAmount">12 345 ₸</span>'
         with (
-            patch("scrapper.steam_wallet.settings", _settings_with_cookie()),
+            patch("scrapper.steam_wallet.get_login_secure", return_value="valid_cookie"),
             patch("scrapper.steam_wallet.httpx.get", return_value=_mock_response(html)),
         ):
             balance, msg = fetch_wallet_balance()
@@ -130,7 +133,7 @@ class TestFetchWalletBalance:
     def test_parses_large_balance(self) -> None:
         html = '<span id="marketWalletBalanceAmount">1 234 567 ₸</span>'
         with (
-            patch("scrapper.steam_wallet.settings", _settings_with_cookie()),
+            patch("scrapper.steam_wallet.get_login_secure", return_value="valid_cookie"),
             patch("scrapper.steam_wallet.httpx.get", return_value=_mock_response(html)),
         ):
             balance, _msg = fetch_wallet_balance()
@@ -138,7 +141,7 @@ class TestFetchWalletBalance:
 
     def test_http_403_returns_none(self) -> None:
         with (
-            patch("scrapper.steam_wallet.settings", _settings_with_cookie()),
+            patch("scrapper.steam_wallet.get_login_secure", return_value="valid_cookie"),
             patch("scrapper.steam_wallet.httpx.get", return_value=_mock_response("", 403)),
         ):
             balance, msg = fetch_wallet_balance()
@@ -150,7 +153,7 @@ class TestFetchWalletBalance:
 
         html = "<html><body>Not logged in</body></html>"
         with (
-            patch("scrapper.steam_wallet.settings", _settings_with_cookie()),
+            patch("scrapper.steam_wallet.get_login_secure", return_value="valid_cookie"),
             patch("scrapper.steam_wallet.httpx.get", return_value=_mock_response(html)),
         ):
             with pytest.raises(AuthError, match="Balance element not found"):
@@ -158,7 +161,7 @@ class TestFetchWalletBalance:
 
     def test_network_error_returns_none(self) -> None:
         with (
-            patch("scrapper.steam_wallet.settings", _settings_with_cookie()),
+            patch("scrapper.steam_wallet.get_login_secure", return_value="valid_cookie"),
             patch("scrapper.steam_wallet.httpx.get", side_effect=Exception("Connection refused")),
         ):
             balance, msg = fetch_wallet_balance()
@@ -168,7 +171,7 @@ class TestFetchWalletBalance:
     def test_double_quoted_id_attribute(self) -> None:
         html = "<span id='marketWalletBalanceAmount'>99 000 ₸</span>"
         with (
-            patch("scrapper.steam_wallet.settings", _settings_with_cookie()),
+            patch("scrapper.steam_wallet.get_login_secure", return_value="valid_cookie"),
             patch("scrapper.steam_wallet.httpx.get", return_value=_mock_response(html)),
         ):
             balance, _msg = fetch_wallet_balance()

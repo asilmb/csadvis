@@ -10,6 +10,7 @@ import dash_bootstrap_components as dbc
 from dash import dcc, html
 
 from config import settings
+from scrapper.steam_wallet import get_saved_balance
 from src.domain.connection import SessionLocal
 from src.domain.models import DimUserPosition
 from src.domain.portfolio_advisor import allocate_portfolio
@@ -33,7 +34,6 @@ from ui.helpers import (
     _kpi_card,
 )
 from ui.url_generator import item_link
-from scrapper.steam_wallet import get_saved_balance
 
 logger = logging.getLogger(__name__)
 

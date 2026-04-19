@@ -47,7 +47,7 @@ def _load_fee_config() -> tuple[float, float, str]:
     Falls back to Steam defaults so domain objects are always valid.
     """
     try:
-        from config import settings  # noqa: PLC0415 — intentional lazy import
+        from config import settings
         return settings.steam_fee_divisor, settings.steam_fee_fixed, settings.currency_symbol
     except Exception:  # pragma: no cover — only fires when config is missing
         return 1.15, 5.0, "₸"
@@ -256,8 +256,8 @@ class ItemService:
             return None
 
         try:
+
             from src.domain.models import DimContainer, FactContainerPrice
-            from sqlalchemy import func
 
             container = self._db.get(DimContainer, item_id)
             if container is None:
@@ -452,7 +452,7 @@ class ItemService:
             logger.error("get_signals_error", service="item_service", error=str(exc))
             return {}
 
-    def process_new_price(self, item_id: str, raw_price: float) -> bool:
+    def process_new_price(self, item_id: str, raw_price: float, volume: int = 0) -> bool:
         """
         Validate and persist a new price observation — Celery task entry point.
 
@@ -544,7 +544,8 @@ class ItemService:
             saved = price_repo.save_jit_price(
                 container_name=container_name,
                 price=raw_price,
-                source="celery_fetch",
+                volume=volume,
+                source="steam_live",
             )
             db.commit()
 
@@ -563,7 +564,7 @@ class ItemService:
     # ── Convenience factory ───────────────────────────────────────────────────
 
     @classmethod
-    def from_session(cls, db) -> "ItemService":
+    def from_session(cls, db) -> ItemService:
         """
         Construct ItemService from a raw SQLAlchemy Session.
 
@@ -574,7 +575,7 @@ class ItemService:
         return cls(SqlAlchemyInventoryRepository(db))
 
     @classmethod
-    def open(cls) -> "ItemService":
+    def open(cls) -> ItemService:
         """
         Open a new DB session and return an ItemService bound to it.
 

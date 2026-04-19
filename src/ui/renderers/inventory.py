@@ -28,7 +28,6 @@ from ui.helpers import (
     _kpi_card,
 )
 
-
 # ── Inventory filtering policy ──────────────────────────────────────────────
 # Centralised here so adding a new asset class (e.g. "package") is a one-liner.
 

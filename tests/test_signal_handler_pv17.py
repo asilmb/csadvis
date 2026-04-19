@@ -26,8 +26,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import patch
 
-import pytest
-
 from src.domain.events import AuthError, LiquidityWarning, PriceAlert, SuperDealDetected
 
 

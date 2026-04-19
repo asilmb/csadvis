@@ -226,25 +226,30 @@ class TestAllocatePortfolio:
                 "net_margin_pct": 50,
             }
         }
-        # High volume, low spread (KZT prices).
-        # planned_qty = 240000 // 240 = 1000; FLIP-R3 requires avg_daily_vol*7 >= planned_qty*2
-        # → quantity >= 2000 for this balance.
+        # quantity=14000 → avg_daily_vol=2000 >= 1000 liquidity floor;
+        # FLIP-R3: avg_daily_vol*7=14000 >= planned_qty*2=2000 ✓
         price_data = {
             "FlipCase": {
-                "quantity": 2000,
+                "quantity": 14000,
                 "current_price": 960.0,
                 "lowest_price": 912.0,
             }
         }
-        # 30-day stable history (KZT prices)
-        stable_history = [{"timestamp": _ts(i), "price": 960.0} for i in range(30)]
+        # Old anchor (200 days ago) → ACTIVE lifecycle stage (age > 180 days).
+        old_anchor = [{"timestamp": _ts(200), "price": 960.0}]
+        # Recent prices with ~6% volatility (alternating 900/1020): passes 5%-30% filter.
+        # Most-recent entry (_ts(0)) = 1020, not near ATL=900 → not DEAD.
+        recent = [
+            {"timestamp": _ts(29 - i), "price": 900.0 if i % 2 == 0 else 1020.0}
+            for i in range(30)
+        ]
         result = allocate_portfolio(
             240000.0,  # 240000₸ balance
             [],
             [c],
             price_data,
             trade_advice,
-            {"c1": stable_history},
+            {"c1": old_anchor + recent},
             {},
         )
         assert result["flip"] is not None

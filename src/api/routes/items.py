@@ -8,8 +8,6 @@ GET /items/{id}/history — full price history as PriceHistoryDTO list
 
 from __future__ import annotations
 
-from typing import Optional
-
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -26,8 +24,8 @@ router = APIRouter(prefix="/items", tags=["items"])
 
 def _get_item_service(db: Session = Depends(get_db_dep)):
     """Inject ItemService bound to the request's DB session."""
-    from src.domain.sql_repositories import SqlAlchemyInventoryRepository
     from src.domain.item_service import ItemService
+    from src.domain.sql_repositories import SqlAlchemyInventoryRepository
 
     return ItemService(SqlAlchemyInventoryRepository(db))
 
@@ -38,8 +36,9 @@ def _get_tier_map(db: Session) -> dict[str, int]:
     Returns empty dict on any error (tier filtering degrades gracefully).
     """
     try:
-        from src.domain.models import SystemSettings
         from sqlalchemy import select
+
+        from src.domain.models import SystemSettings
 
         rows = db.execute(
             select(SystemSettings).where(SystemSettings.key.like("tier:%"))
@@ -69,7 +68,7 @@ def _get_tier_map(db: Session) -> dict[str, int]:
     ),
 )
 def list_items(
-    tier: Optional[int] = Query(
+    tier: int | None = Query(
         default=None,
         ge=1,
         le=3,

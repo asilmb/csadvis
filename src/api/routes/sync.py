@@ -15,13 +15,13 @@ import logging
 
 from fastapi import APIRouter
 
+from config import settings
+from scrapper.steam_sync import sync_transactions, sync_wallet
 from src.api.schemas import (
     SyncDispatchResponse,
     SyncTransactionsResponse,
     SyncWalletResponse,
 )
-from config import settings
-from scrapper.steam_sync import sync_transactions, sync_wallet
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sync", tags=["sync"])
@@ -30,8 +30,8 @@ router = APIRouter(prefix="/sync", tags=["sync"])
 def _enqueue(job: dict, label: str) -> SyncDispatchResponse:
     """Put a job on the in-process work queue. Returns ok=False when queue is full."""
     try:
-        from infra.work_queue import get_queue
-        get_queue().put_nowait(job)
+        from infra.work_queue import enqueue
+        enqueue(job)
         return SyncDispatchResponse(ok=True, already_running=False, message=f"{label} enqueued.")
     except asyncio.QueueFull:
         return SyncDispatchResponse(ok=False, already_running=True, message=f"{label} already queued (queue full).")
@@ -89,3 +89,76 @@ def sync_market_catalog_endpoint() -> SyncDispatchResponse:
 @router.post("/market/prices", response_model=SyncDispatchResponse)
 def sync_market_prices_endpoint() -> SyncDispatchResponse:
     return _enqueue({"type": "price_poll"}, "price_poll")
+
+
+@router.post("/market/prices/missing-volume", response_model=SyncDispatchResponse)
+def sync_prices_missing_volume_endpoint() -> SyncDispatchResponse:
+    """Enqueue price_poll only for containers that have no steam_live record with volume > 0."""
+    from sqlalchemy import exists
+
+    from src.domain.connection import SessionLocal
+    from src.domain.models import DimContainer, FactContainerPrice
+    with SessionLocal() as db:
+        has_volume = exists().where(
+            (FactContainerPrice.container_id == DimContainer.container_id)
+            & (FactContainerPrice.source == "steam_live")
+            & (FactContainerPrice.volume_7d > 0)
+        )
+        ids = [
+            str(c.container_id) for c in
+            db.query(DimContainer)
+            .filter(DimContainer.is_blacklisted == 0, ~has_volume)
+            .all()
+        ]
+    if not ids:
+        return SyncDispatchResponse(ok=True, already_running=False, message="Все контейнеры уже имеют volume.")
+    return _enqueue({"type": "price_poll", "container_ids": ids}, f"price_poll/missing-volume ({len(ids)})")
+
+
+# ── Backfill price history (all containers) ───────────────────────────────────
+
+@router.post("/backfill", response_model=SyncDispatchResponse)
+def sync_backfill_endpoint() -> SyncDispatchResponse:
+    return _enqueue({"type": "backfill_history", "names": None}, "backfill_history")
+
+
+# ── Backfill price history (blacklisted containers) ───────────────────────────
+
+@router.post("/backfill/blacklisted", response_model=SyncDispatchResponse)
+def sync_backfill_blacklisted_endpoint() -> SyncDispatchResponse:
+    from src.domain.connection import SessionLocal
+    from src.domain.models import DimContainer
+    with SessionLocal() as db:
+        names = [str(r.container_name) for r in db.query(DimContainer.container_name).filter(DimContainer.is_blacklisted == 1).all()]
+    if not names:
+        return SyncDispatchResponse(ok=False, already_running=False, message="No blacklisted containers.")
+    return _enqueue({"type": "backfill_history", "names": names}, f"backfill_history/blacklisted ({len(names)})")
+
+
+# ── Sync prices (blacklisted containers) ──────────────────────────────────────
+
+@router.post("/market/prices/blacklisted", response_model=SyncDispatchResponse)
+def sync_prices_blacklisted_endpoint() -> SyncDispatchResponse:
+    return _enqueue({"type": "price_poll", "include_blacklisted": True}, "price_poll/blacklisted")
+
+
+# ── Backfill price history (containers with open positions only) ───────────────
+
+@router.post("/backfill/active", response_model=SyncDispatchResponse)
+def sync_backfill_active_endpoint() -> SyncDispatchResponse:
+    from src.domain.connection import SessionLocal
+    from src.domain.models import DimContainer, Position, PositionStatus
+    with SessionLocal() as db:
+        names = [
+            row.container_name
+            for row in (
+                db.query(DimContainer.container_name)
+                .join(Position, DimContainer.container_name == Position.market_hash_name)
+                .filter(Position.status == PositionStatus.OPEN, DimContainer.is_blacklisted == 0)
+                .distinct()
+                .all()
+            )
+        ]
+    if not names:
+        return SyncDispatchResponse(ok=False, already_running=False, message="No open positions found.")
+    return _enqueue({"type": "backfill_history", "names": names}, f"backfill_history ({len(names)} containers)")

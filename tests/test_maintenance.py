@@ -2,14 +2,6 @@
 Unit tests for PV-26: services/maintenance.py
 
 Covers:
-  MaintenanceService.cleanup_task_queue():
-    - deletes COMPLETED tasks older than retention window
-    - deletes FAILED tasks older than retention window
-    - retains PENDING tasks regardless of age
-    - retains PROCESSING tasks regardless of age
-    - retains COMPLETED/FAILED tasks within the retention window
-    - returns correct deleted count
-
   MaintenanceService.cleanup_event_log():
     - deletes INFO rows older than retention window
     - deletes WARNING rows older than retention window
@@ -23,21 +15,20 @@ Covers:
     - executes without raising (mocked engine.connect)
 
   MaintenanceService.run_all():
-    - calls cleanup_task_queue, cleanup_event_log, vacuum in order
+    - calls cleanup_event_log and vacuum in order
     - returns CleanupResult with correct counts
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from src.domain.models import Base, EventLog, TaskQueue, TaskStatus
-
+from src.domain.models import Base, EventLog
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -83,13 +74,6 @@ def _make_cm(engine):
     return _CM
 
 
-def _add_task(db: Session, status: TaskStatus, created_at: datetime) -> TaskQueue:
-    row = TaskQueue(type="test_task", priority=2, status=status, created_at=created_at)
-    db.add(row)
-    db.flush()
-    return row
-
-
 def _add_event(db: Session, level: str, ts: datetime) -> EventLog:
     row = EventLog(level=level, module="test", message="msg", timestamp=ts)
     db.add(row)
@@ -97,86 +81,10 @@ def _add_event(db: Session, level: str, ts: datetime) -> EventLog:
     return row
 
 
-def _count_tasks(engine) -> int:
-    TestSession = sessionmaker(bind=engine)
-    with TestSession() as s:
-        return s.query(TaskQueue).count()
-
-
 def _count_events(engine) -> int:
     TestSession = sessionmaker(bind=engine)
     with TestSession() as s:
         return s.query(EventLog).count()
-
-
-# ─── cleanup_task_queue ───────────────────────────────────────────────────────
-
-
-class TestCleanupTaskQueue:
-    def _run(self, engine, **kwargs) -> int:
-        from infra.maintenance import MaintenanceService
-
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setattr("src.domain.connection.SessionLocal", _make_cm(engine), raising=False)
-            return MaintenanceService().cleanup_task_queue(**kwargs)
-
-    def test_deletes_completed_old_tasks(self, engine, db):
-        _add_task(db, TaskStatus.COMPLETED, _ago(hours=30))
-        db.commit()
-        deleted = self._run(engine, older_than_hours=24)
-        assert deleted == 1
-        assert _count_tasks(engine) == 0
-
-    def test_deletes_failed_old_tasks(self, engine, db):
-        _add_task(db, TaskStatus.FAILED, _ago(hours=48))
-        db.commit()
-        deleted = self._run(engine, older_than_hours=24)
-        assert deleted == 1
-        assert _count_tasks(engine) == 0
-
-    def test_retains_pending_regardless_of_age(self, engine, db):
-        _add_task(db, TaskStatus.PENDING, _ago(hours=100))
-        db.commit()
-        deleted = self._run(engine, older_than_hours=24)
-        assert deleted == 0
-        assert _count_tasks(engine) == 1
-
-    def test_retains_processing_regardless_of_age(self, engine, db):
-        _add_task(db, TaskStatus.PROCESSING, _ago(hours=100))
-        db.commit()
-        deleted = self._run(engine, older_than_hours=24)
-        assert deleted == 0
-        assert _count_tasks(engine) == 1
-
-    def test_retains_retry_regardless_of_age(self, engine, db):
-        _add_task(db, TaskStatus.RETRY, _ago(hours=100))
-        db.commit()
-        deleted = self._run(engine, older_than_hours=24)
-        assert deleted == 0
-        assert _count_tasks(engine) == 1
-
-    def test_retains_fresh_completed_task(self, engine, db):
-        """COMPLETED task created 1h ago — within 24h retention → not deleted."""
-        _add_task(db, TaskStatus.COMPLETED, _ago(hours=1))
-        db.commit()
-        deleted = self._run(engine, older_than_hours=24)
-        assert deleted == 0
-        assert _count_tasks(engine) == 1
-
-    def test_mixed_tasks_only_old_terminal_deleted(self, engine, db):
-        _add_task(db, TaskStatus.COMPLETED, _ago(hours=30))   # → deleted
-        _add_task(db, TaskStatus.FAILED, _ago(hours=36))       # → deleted
-        _add_task(db, TaskStatus.COMPLETED, _ago(hours=2))     # → kept (fresh)
-        _add_task(db, TaskStatus.PENDING, _ago(hours=100))     # → kept (live)
-        db.commit()
-        deleted = self._run(engine, older_than_hours=24)
-        assert deleted == 2
-        assert _count_tasks(engine) == 2
-
-    def test_returns_zero_when_nothing_to_delete(self, engine, db):
-        db.commit()
-        deleted = self._run(engine, older_than_hours=24)
-        assert deleted == 0
 
 
 # ─── cleanup_event_log ────────────────────────────────────────────────────────
@@ -334,15 +242,11 @@ class TestVacuum:
 
 
 class TestRunAll:
-    def test_calls_all_three_steps_in_order(self):
+    def test_calls_both_steps_in_order(self):
         from infra.maintenance import MaintenanceService
 
         calls: list[str] = []
         svc = MaintenanceService()
-
-        def fake_tasks(**kw):
-            calls.append("tasks")
-            return 5
 
         def fake_events(**kw):
             calls.append("events")
@@ -351,38 +255,30 @@ class TestRunAll:
         def fake_vacuum():
             calls.append("vacuum")
 
-        svc.cleanup_task_queue = fake_tasks
         svc.cleanup_event_log = fake_events
         svc.vacuum = fake_vacuum
 
         result = svc.run_all()
 
-        assert calls == ["tasks", "events", "vacuum"]
-        assert result.tasks_deleted == 5
+        assert calls == ["events", "vacuum"]
         assert result.events_deleted == 12
 
     def test_returns_cleanup_result(self):
         from infra.maintenance import CleanupResult, MaintenanceService
 
         svc = MaintenanceService()
-        svc.cleanup_task_queue = lambda **kw: 3
         svc.cleanup_event_log = lambda **kw: 7
         svc.vacuum = lambda: None
 
         result = svc.run_all()
         assert isinstance(result, CleanupResult)
-        assert result.tasks_deleted == 3
         assert result.events_deleted == 7
 
     def test_default_params_forwarded(self):
-        """run_all() passes its args through to the individual methods."""
+        """run_all() passes its args through to cleanup_event_log."""
         from infra.maintenance import MaintenanceService
 
         received: dict = {}
-
-        def fake_tasks(older_than_hours):
-            received["task_h"] = older_than_hours
-            return 0
 
         def fake_events(older_than_days, protect_errors_hours):
             received["event_d"] = older_than_days
@@ -390,13 +286,11 @@ class TestRunAll:
             return 0
 
         svc = MaintenanceService()
-        svc.cleanup_task_queue = fake_tasks
         svc.cleanup_event_log = fake_events
         svc.vacuum = lambda: None
 
-        svc.run_all(task_retention_h=12, event_retention_d=3, protect_errors_h=24)
+        svc.run_all(event_retention_d=3, protect_errors_h=24)
 
-        assert received["task_h"] == 12
         assert received["event_d"] == 3
         assert received["protect_h"] == 24
 

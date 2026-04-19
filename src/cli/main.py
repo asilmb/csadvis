@@ -4,22 +4,22 @@
 Исправлена ошибка AttributeError: 'str' object has no attribute 'mkdir'.
 """
 
+import os
 import signal
 import sys
-import os
-from pathlib import Path
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import structlog
 import uvicorn
 from fastapi import FastAPI
 
-from src.api.app import create_app
 from config import settings
-from src.domain.connection import SessionLocal, engine, init_db
 from infra.logger import configure_logging
 from seed.data import seed_database
+from src.api.app import create_app
+from src.domain.connection import SessionLocal, engine, init_db
 
 LOG_PATH = Path(os.getenv("LOG_DIR", "/app/logs"))
 

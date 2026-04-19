@@ -354,6 +354,7 @@ class SqlAlchemyPositionRepository(PositionRepository):
             new_market_id=new_market_id,
             is_on_market=is_on_market,
         )
+        self._db.flush()
 
     def get_open_by_classid(self, classid: str) -> list[PositionDTO]:
         """Return OPEN positions matching classid, ordered by opened_at ASC (FIFO), then id ASC."""
@@ -536,12 +537,13 @@ def get_cookie_status(db) -> str:
 
 def set_cookie_status(db, status: str) -> None:
     """Upsert cookie_status key in SystemSettings. Caller must commit."""
+    from datetime import datetime
+
     from src.domain.models import SystemSettings
-    from datetime import datetime, timezone
     row = db.get(SystemSettings, "cookie_status")
     if row is None:
         row = SystemSettings(key="cookie_status", value=status)
         db.add(row)
     else:
         row.value = status
-        row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        row.updated_at = datetime.now(UTC).replace(tzinfo=None)

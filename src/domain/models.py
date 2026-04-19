@@ -468,3 +468,28 @@ class SystemSettings(Base):
         default=lambda: datetime.now(UTC).replace(tzinfo=None),
         onupdate=lambda: datetime.now(UTC).replace(tzinfo=None),
     )
+
+
+class RateLimitLog(Base):
+    """Records Steam 429 events and enforces cooldown_until across all Steam requests."""
+
+    __tablename__ = "rate_limit_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    triggered_at = Column(DateTime, nullable=False, default=lambda: datetime.now(UTC).replace(tzinfo=None))
+    cooldown_until = Column(DateTime, nullable=False)
+    triggered_by = Column(String(200), nullable=True)
+
+
+class ScrapeSession(Base):
+    """Persistent snapshot of an in-progress price_poll or backfill_history job."""
+
+    __tablename__ = "scrape_sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    job_type = Column(String(50), nullable=False)       # 'price_poll' | 'backfill_history'
+    all_ids = Column(Text, nullable=False)              # JSON array — shuffled order at job start
+    processed_count = Column(Integer, nullable=False, default=0)
+    total_count = Column(Integer, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(UTC).replace(tzinfo=None))
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(UTC).replace(tzinfo=None))

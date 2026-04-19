@@ -19,8 +19,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from config import settings
-from src.domain.models import ContainerType, DimContainer
 from scrapper.steam_market_scraper import ScrapedContainer
+from src.domain.models import ContainerType, DimContainer
 
 logger = logging.getLogger(__name__)
 

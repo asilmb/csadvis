@@ -1,0 +1,26 @@
+.sidebar-sort-dropdown .Select-control,
+.sidebar-sort-dropdown .Select-menu-outer {
+    background-color: #1a1a2e !important;
+    border-color: #2a2a3e !important;
+    color: #e0e0e0 !important;
+}
+
+.sidebar-sort-dropdown .Select-value-label,
+.sidebar-sort-dropdown .Select-placeholder {
+    color: #e0e0e0 !important;
+    font-size: 11px !important;
+}
+
+.sidebar-sort-dropdown .Select-option {
+    background-color: #1a1a2e !important;
+    color: #e0e0e0 !important;
+    font-size: 11px !important;
+}
+
+.sidebar-sort-dropdown .Select-option.is-focused {
+    background-color: #2a2a3e !important;
+}
+
+.sidebar-sort-dropdown .Select-arrow {
+    border-top-color: #888 !important;
+}

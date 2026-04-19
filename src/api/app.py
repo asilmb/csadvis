@@ -8,9 +8,11 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.routes import (
+    auth_router,
     containers_router,
     items_router,
     metrics_router,
+    scrape_sessions_router,
     stats_router,
     sync_router,
     system_router,
@@ -76,11 +78,13 @@ def create_app(lifespan: Any = None) -> FastAPI:
                 response.headers["X-Response-Time-Ms"] = str(duration_ms)
 
     # ── Routers ───────────────────────────────────────────────────────────────
+    app.include_router(auth_router, prefix="/api/v1")
     app.include_router(containers_router, prefix="/api/v1")
     app.include_router(items_router, prefix="/api/v1")
     app.include_router(stats_router, prefix="/api/v1")
     app.include_router(sync_router, prefix="/api/v1")
     app.include_router(system_router, prefix="/api/v1")
+    app.include_router(scrape_sessions_router, prefix="/api/v1")
     app.include_router(metrics_router)  # /metrics — no prefix
 
     @app.get("/health", tags=["health"], summary="Health check")

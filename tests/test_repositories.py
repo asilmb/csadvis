@@ -15,10 +15,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.domain.sql_repositories import SqlAlchemyInventoryRepository
-from src.domain.repositories import InventoryRepository
-from src.domain.value_objects import Amount
 from src.domain.portfolio import get_balance_data
+from src.domain.repositories import InventoryRepository
+from src.domain.sql_repositories import SqlAlchemyInventoryRepository
+from src.domain.value_objects import Amount
 
 # ─── Helpers / Fakes ──────────────────────────────────────────────────────────
 

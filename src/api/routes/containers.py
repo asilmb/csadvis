@@ -14,11 +14,11 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from src.domain.connection import get_db_dep
-from src.domain.models import DimContainer, FactContainerPrice
-from src.domain.investment import compute_all_investment_signals
-from src.domain.portfolio import get_portfolio_data
 from src.api.schemas import SyncDispatchResponse
+from src.domain.connection import get_db_dep
+from src.domain.investment import compute_all_investment_signals
+from src.domain.models import DimContainer, FactContainerPrice
+from src.domain.portfolio import get_portfolio_data
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/containers", tags=["containers"])
@@ -131,9 +131,10 @@ def sync_container_price(container_id: str, db: Session = Depends(get_db)) -> Sy
     if c.is_blacklisted:
         return SyncDispatchResponse(ok=False, already_running=False, message="Container is blacklisted.")
     try:
-        from infra.work_queue import get_queue
-        get_queue().put_nowait({"type": "price_poll", "container_id": container_id})
-        return SyncDispatchResponse(ok=True, already_running=False, task_id=container_id, message="Price fetch enqueued.")
+        from infra.work_queue import enqueue
+        enqueue({"type": "backfill_history", "names": [str(c.container_name)]})
+        enqueue({"type": "price_poll", "container_id": container_id})
+        return SyncDispatchResponse(ok=True, already_running=False, task_id=container_id, message="History + price fetch enqueued.")
     except asyncio.QueueFull:
         return SyncDispatchResponse(ok=False, already_running=True, message="Queue full — try again shortly.")
     except Exception as exc:

@@ -14,12 +14,13 @@ import traceback
 from datetime import UTC, datetime
 from typing import Any
 
-import dash_bootstrap_components as dbc
 import dash
+import dash_bootstrap_components as dbc
 from dash import ALL, Input, Output, State, callback_context, html, no_update
+
 from config import settings as _settings
-from src.domain.value_objects import Amount
 from src.domain.event_calendar import get_event_signals as _get_ev_signals
+from src.domain.value_objects import Amount
 from ui.helpers import (
     _BG,
     _BG3,
@@ -56,6 +57,7 @@ def _render_balance_tab(wallet_balance: Any, inventory_data: Any) -> html.Div:
 def _get_system_health():
     """Fetch system health snapshot for the Status tab (calls API + DB)."""
     import requests as _req
+
     from config import settings as _s
     from infra.steam_credentials import get_login_secure
 
@@ -69,13 +71,35 @@ def _get_system_health():
     except Exception:
         pass
 
-    from src.domain.models import DimContainer
     from src.domain.connection import SessionLocal
+    from src.domain.models import DimContainer
     blacklisted = []
     try:
         with SessionLocal() as db:
             bl = db.query(DimContainer).filter(DimContainer.is_blacklisted == 1).all()
             blacklisted = [{"container_id": str(c.container_id), "container_name": c.container_name} for c in bl]
+    except Exception:
+        pass
+
+    cooldown_until = None
+    scrape_sessions = []
+    try:
+        r = _req.get(
+            f"http://{_s.api_internal_host}:{_s.api_port}/api/v1/scrape-sessions/cooldown",
+            timeout=3,
+        )
+        if r.ok:
+            cd = r.json()
+            cooldown_until = cd.get("cooldown_until_fmt") if cd.get("active") else None
+    except Exception:
+        pass
+    try:
+        r = _req.get(
+            f"http://{_s.api_internal_host}:{_s.api_port}/api/v1/scrape-sessions/",
+            timeout=3,
+        )
+        if r.ok:
+            scrape_sessions = r.json()
     except Exception:
         pass
 
@@ -89,6 +113,9 @@ def _get_system_health():
         blacklisted_containers = blacklisted
         timestamp = datetime.now(UTC).strftime("%H:%M:%S")
         worker = worker_state
+
+    _Health.cooldown_until = cooldown_until
+    _Health.scrape_sessions = scrape_sessions
 
     return _Health()
 
@@ -133,18 +160,77 @@ def register_callbacks(app: Any) -> None:
         return [], invest
 
     @app.callback(
+        Output("blacklist-view-store", "data"),
+        Output("btn-toggle-blacklist-view", "outline"),
+        Output("btn-toggle-blacklist-view", "children"),
+        Input("btn-toggle-blacklist-view", "n_clicks"),
+        State("blacklist-view-store", "data"),
+        prevent_initial_call=True,
+    )
+    def toggle_blacklist_view(n: Any, is_bl: Any) -> Any:
+        new_val = not bool(is_bl)
+        return new_val, not new_val, ("Активные" if new_val else "Скрытые")
+
+    @app.callback(
+        Output("bl-scan-msg", "children"),
+        Input("btn-bl-backfill", "n_clicks"),
+        Input("btn-bl-prices", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def do_bl_scan(n_backfill: Any, n_prices: Any) -> str:
+        if not n_backfill and not n_prices:
+            raise dash.exceptions.PreventUpdate
+        ctx = callback_context
+        btn_id = ctx.triggered[0]["prop_id"].split(".")[0]
+        import requests as _req
+        try:
+            if btn_id == "btn-bl-backfill":
+                r = _req.post("http://api:8000/sync/backfill/blacklisted", timeout=5)
+                return r.json().get("message", "OK")
+            else:
+                r = _req.post("http://api:8000/sync/market/prices/blacklisted", timeout=5)
+                return r.json().get("message", "OK")
+        except Exception as exc:
+            return str(exc)
+
+    @app.callback(
         Output("container-list", "children"),
         Input("invest-store", "data"),
         Input("selected-cid", "data"),
         Input("sidebar-search", "value"),
         Input("inventory-store", "data"),
+        Input("sidebar-sort", "value"),
+        Input("blacklist-view-store", "data"),
     )
     def render_container_list(
-        invest: Any, selected_cid: Any, search: Any, inventory_data: Any
+        invest: Any, selected_cid: Any, search: Any, inventory_data: Any, sort: Any, show_blacklisted: Any
     ) -> Any:
         invest = invest or {}
         search = (search or "").lower().strip()
-        all_containers = _get_containers()
+        sort = sort or "newest"
+        show_blacklisted = bool(show_blacklisted)
+        all_containers = _get_containers(blacklisted=show_blacklisted)
+
+        def _main_key(c):
+            cid = str(c.container_id)
+            sig = invest.get(cid, {})
+            price = sig.get("current_price") or 0.0
+            volume = sig.get("quantity") or 0
+            name = str(c.container_name)
+            if sort in ("newest", "oldest"):
+                return name
+            if sort == "price_asc":
+                return price if price > 0 else float("inf")
+            if sort == "price_desc":
+                return -(price or 0.0)
+            if sort == "volume_desc":
+                return -(volume or 0)
+            if sort == "volume_asc":
+                return volume if volume > 0 else float("inf")
+            return name
+
+        reverse_main = sort == "oldest"
+        all_containers = sorted(all_containers, key=_main_key, reverse=reverse_main)
 
         # Build owned count map: container_name -> total count
         owned_map: dict = {}
@@ -228,7 +314,7 @@ def register_callbacks(app: Any) -> None:
                         "borderRadius": "2px",
                         "display": "flex",
                         "alignItems": "center",
-                        "opacity": "0.5" if is_blacklisted else "1",
+                        "opacity": "1",
                     },
                     children=[
                         # Clickable name area
@@ -534,7 +620,7 @@ def register_callbacks(app: Any) -> None:
             return render_system_status(health=_get_system_health())
         return _no_data()
 
-    # ── System Status: refresh on interval or manual button ──────────────────
+    # ── System Status: refresh on task completion or manual button ───────────
     @app.callback(
         Output("tab-content", "children", allow_duplicate=True),
         Input("task-done-ts", "data"),
@@ -557,6 +643,7 @@ def register_callbacks(app: Any) -> None:
     )
     def update_worker_progress(_n: Any) -> Any:
         import requests as _req
+
         from config import settings as _s
         from ui.renderers.system_status import _render_progress
         try:
@@ -569,54 +656,6 @@ def register_callbacks(app: Any) -> None:
             state = {}
         idle = not state.get("busy") and state.get("queue_size", 0) == 0
         return _render_progress(state), idle  # disable interval when idle
-
-    # ── Force Global Sync: call API endpoints ────────────────────────────────
-    @app.callback(
-        Output("health-action-msg", "children"),
-        Input("btn-force-sync", "n_clicks"),
-        prevent_initial_call=True,
-    )
-    def do_force_sync(n: Any) -> str:
-        import requests as _req
-        from config import settings as _s
-        dispatched = []
-        try:
-            r = _req.post(f"http://{_s.api_internal_host}:{_s.api_port}/api/v1/sync/inventory", timeout=5)
-            if r.json().get("ok"):
-                dispatched.append("sync_inventory")
-        except Exception:
-            pass
-        try:
-            r = _req.post(f"http://{_s.api_internal_host}:{_s.api_port}/api/v1/sync/market/prices", timeout=5)
-            if r.json().get("ok"):
-                dispatched.append("price_poll")
-        except Exception:
-            pass
-        return f"Dispatched: {', '.join(dispatched)}" if dispatched else "Dispatch failed — is the API running?"
-
-    # ── Update Containers: bulk price_poll for all active containers ─────────
-    @app.callback(
-        Output("health-action-msg", "children", allow_duplicate=True),
-        Output("worker-progress-interval", "disabled", allow_duplicate=True),
-        Input("btn-update-containers", "n_clicks"),
-        prevent_initial_call=True,
-    )
-    def do_update_containers(n: Any) -> tuple:
-        import requests as _req
-        from config import settings as _s
-        try:
-            r = _req.post(
-                f"http://{_s.api_internal_host}:{_s.api_port}/api/v1/sync/market/prices",
-                timeout=5,
-            )
-            data = r.json()
-            if data.get("already_running"):
-                return "Уже выполняется — дождись завершения.", True
-            if data.get("ok"):
-                return "Обновление цен поставлено в очередь.", False
-            return data.get("message", "Неизвестная ошибка"), True
-        except Exception as exc:
-            return f"Ошибка: {exc}", True
 
     # ── Sync Inventory (API endpoint) ────────────────────────────────────────
     @app.callback(
@@ -632,6 +671,8 @@ def register_callbacks(app: Any) -> None:
         prevent_initial_call=True,
     )
     def do_sync_inventory(n: Any) -> tuple:
+        if not n:
+            raise dash.exceptions.PreventUpdate
         import requests as _req
         try:
             r = _req.post(f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/sync/inventory", timeout=5)
@@ -659,6 +700,8 @@ def register_callbacks(app: Any) -> None:
         prevent_initial_call=True,
     )
     def do_sync_catalog(n: Any) -> tuple:
+        if not n:
+            raise dash.exceptions.PreventUpdate
         import requests as _req
         try:
             r = _req.post(f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/sync/market/catalog", timeout=5)
@@ -686,6 +729,8 @@ def register_callbacks(app: Any) -> None:
         prevent_initial_call=True,
     )
     def do_sync_prices(n: Any) -> tuple:
+        if not n:
+            raise dash.exceptions.PreventUpdate
         import requests as _req
         try:
             r = _req.post(f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/sync/market/prices", timeout=5)
@@ -698,6 +743,78 @@ def register_callbacks(app: Any) -> None:
             return data.get("message", "Неизвестная ошибка"), "Ошибка цен", True, "danger"
         except Exception as exc:
             return str(exc), "Ошибка подключения", True, "danger"
+
+    @app.callback(
+        Output("app-toast", "children", allow_duplicate=True),
+        Output("app-toast", "header", allow_duplicate=True),
+        Output("app-toast", "is_open", allow_duplicate=True),
+        Output("app-toast", "icon", allow_duplicate=True),
+        Input("btn-backfill-active", "n_clicks"),
+        running=[
+            (Output("btn-backfill-active", "disabled"), True, False),
+            (Output("btn-backfill-active", "children"), [dbc.Spinner(size="sm"), " Запуск…"], "Backfill Active"),
+        ],
+        prevent_initial_call=True,
+    )
+    def do_backfill_active(n: Any) -> tuple:
+        if not n:
+            raise dash.exceptions.PreventUpdate
+        import requests as _req
+        try:
+            r = _req.post(f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/sync/backfill/active", timeout=5)
+            data = r.json()
+            if data.get("ok"):
+                return data.get("message", "Запущено"), "Backfill Active", True, "success"
+            return data.get("message", "Нет открытых позиций"), "Backfill Active", True, "warning"
+        except Exception as exc:
+            return str(exc), "Ошибка подключения", True, "danger"
+
+    @app.callback(
+        Output("app-toast", "children", allow_duplicate=True),
+        Output("app-toast", "header", allow_duplicate=True),
+        Output("app-toast", "is_open", allow_duplicate=True),
+        Output("app-toast", "icon", allow_duplicate=True),
+        Input("btn-backfill-all", "n_clicks"),
+        running=[
+            (Output("btn-backfill-all", "disabled"), True, False),
+            (Output("btn-backfill-all", "children"), [dbc.Spinner(size="sm"), " Запуск…"], "Backfill All"),
+        ],
+        prevent_initial_call=True,
+    )
+    def do_backfill_all(n: Any) -> tuple:
+        if not n:
+            raise dash.exceptions.PreventUpdate
+        import requests as _req
+        try:
+            r = _req.post(f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/sync/backfill", timeout=5)
+            data = r.json()
+            if data.get("ok"):
+                return data.get("message", "Запущено"), "Backfill All (~60–110 мин)", True, "success"
+            return data.get("message", "Неизвестная ошибка"), "Ошибка", True, "warning"
+        except Exception as exc:
+            return str(exc), "Ошибка подключения", True, "danger"
+
+    @app.callback(
+        Output("health-action-msg", "children", allow_duplicate=True),
+        Input("btn-clear-queue", "n_clicks"),
+        running=[(Output("btn-clear-queue", "disabled"), True, False)],
+        prevent_initial_call=True,
+    )
+    def do_clear_queue(n: Any) -> str:
+        import requests as _req
+        try:
+            r = _req.post(
+                f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/system/cancel-task",
+                json={"job_type": None},
+                timeout=5,
+            )
+            data = r.json()
+            removed = data.get("removed", 0)
+            if data.get("ok"):
+                return f"Очередь очищена — удалено {removed} задач."
+            return f"Ошибка: {data.get('error', '?')}"
+        except Exception as exc:
+            return str(exc)
 
     @app.callback(
         Output("steam-history-status", "children"),
@@ -730,9 +847,10 @@ def register_callbacks(app: Any) -> None:
             status = html.Span(display_msg, style={"color": _YELLOW, "fontSize": "11px"})
             return status, no_update, display_msg, "История Steam", True, "warning"
 
+        from src.domain.connection import SessionLocal as _SL_hist
         from src.domain.models import FactTransaction
 
-        db = SessionLocal()
+        db = _SL_hist()
         try:
             db.query(FactTransaction).filter(FactTransaction.notes.like("steam:%")).delete(
                 synchronize_session=False
@@ -808,10 +926,10 @@ def register_callbacks(app: Any) -> None:
 
         from dash import html as _html
 
-        from src.domain.portfolio import upsert_annual
         from scrapper.steam_sync import sync_inventory as _sync_inv
         from scrapper.steam_sync import sync_transactions as _sync_tx
         from scrapper.steam_sync import sync_wallet as _sync_wal
+        from src.domain.portfolio import upsert_annual
 
         _err_return = lambda msg: (
             "danger", False,
@@ -827,9 +945,10 @@ def register_callbacks(app: Any) -> None:
 
             # Persist transactions to DB (same logic as load_steam_history)
             if transactions.ok and transactions.transactions:
+                from src.domain.connection import SessionLocal as _SL_tx
                 from src.domain.models import FactTransaction
 
-                db = SessionLocal()
+                db = _SL_tx()
                 try:
                     db.query(FactTransaction).filter(FactTransaction.notes.like("steam:%")).delete(
                         synchronize_session=False
@@ -861,8 +980,8 @@ def register_callbacks(app: Any) -> None:
 
             # CACHE-1: recompute and persist portfolio advice + investment signals
             try:
-                from src.domain.connection import SessionLocal as _SL
                 from infra.cache_writer import refresh_cache as _refresh_cache
+                from src.domain.connection import SessionLocal as _SL
 
                 _cache_db = _SL()
                 try:
@@ -1119,11 +1238,12 @@ def register_callbacks(app: Any) -> None:
     )
     def update_sync_status(_ts: Any, sync_data: Any) -> Any:
         """Show last sync age; check worker busy state via API."""
+        import requests as _req
+        from dash import html as _html
+
+        from config import settings as _s
         from src.domain.connection import SessionLocal
         from src.domain.models import SystemSettings
-        from dash import html as _html
-        import requests as _req
-        from config import settings as _s
 
         # Check if worker is busy
         worker_busy = False
@@ -1239,7 +1359,7 @@ def register_callbacks(app: Any) -> None:
     @app.callback(
         Output("toast-store", "data", allow_duplicate=True),
         Input("startup-interval", "n_intervals"),
-        prevent_initial_call=False,
+        prevent_initial_call=True,
     )
     def _init_toast_store(_n: Any) -> Any:
         return []
@@ -1275,6 +1395,45 @@ def register_callbacks(app: Any) -> None:
         from ui.renderers.system_status import render_system_status
         return render_system_status(health=_get_system_health())
 
+    # ── Scrape sessions: resume / delete ─────────────────────────────────────────
+    @app.callback(
+        Output("tab-content", "children", allow_duplicate=True),
+        Output("session-action-msg", "children"),
+        Input({"type": "btn-session-resume", "index": ALL}, "n_clicks"),
+        Input({"type": "btn-session-delete", "index": ALL}, "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def do_session_action(resume_clicks: Any, delete_clicks: Any) -> Any:
+        ctx = callback_context
+        triggered = [t for t in ctx.triggered if t.get("value") and t["value"] > 0]
+        if not triggered:
+            raise dash.exceptions.PreventUpdate
+        prop_id = triggered[0]["prop_id"]
+        import json as _json2
+        try:
+            info = _json2.loads(prop_id.rsplit(".", 1)[0])
+            session_id = info["index"]
+            btn_type = info["type"]
+        except Exception:
+            raise dash.exceptions.PreventUpdate
+
+        import requests as _req
+
+        from config import settings as _s
+        base = f"http://{_s.api_internal_host}:{_s.api_port}/api/v1/scrape-sessions"
+        try:
+            if btn_type == "btn-session-resume":
+                r = _req.post(f"{base}/{session_id}/resume", timeout=5)
+                msg = r.json().get("message", "OK")
+            else:
+                r = _req.delete(f"{base}/{session_id}", timeout=5)
+                msg = "Сессия удалена."
+        except Exception as exc:
+            msg = str(exc)
+
+        from ui.renderers.system_status import render_system_status
+        return render_system_status(health=_get_system_health()), msg
+
     # ── Per-container: toggle blacklist ──────────────────────────────────────────
     @app.callback(
         Output("invest-store", "data", allow_duplicate=True),
@@ -1293,7 +1452,6 @@ def register_callbacks(app: Any) -> None:
             cid = _json.loads(prop_id.rsplit(".", 1)[0])["index"]
         except Exception:
             raise dash.exceptions.PreventUpdate
-        import requests as _req
         try:
             from src.domain.connection import SessionLocal
             from src.domain.models import DimContainer
@@ -1405,7 +1563,88 @@ def register_callbacks(app: Any) -> None:
             for entry in store
         ]
 
+    _register_auth_modal_callbacks(app)
     _register_cookie_callbacks(app)
+
+
+# ─── Auth-Pause Modal ─────────────────────────────────────────────────────────
+
+
+def _register_auth_modal_callbacks(app: dash.Dash) -> None:
+
+    @app.callback(
+        Output("auth-modal", "is_open"),
+        Input("auth-check-interval", "n_intervals"),
+        State("auth-modal", "is_open"),
+        prevent_initial_call=False,
+    )
+    def check_auth_pause(_n: Any, is_open: Any) -> Any:
+        """Open the auth modal when the worker enters PAUSED_AUTH; keep it open until resolved."""
+        if is_open:
+            # Already open — don't interfere; submit callback closes it
+            raise dash.exceptions.PreventUpdate
+        import requests as _req
+        try:
+            r = _req.get(
+                f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/system/queue-status",
+                timeout=2,
+            )
+            state = r.json() if r.ok else {}
+            return bool(state.get("auth_paused", False))
+        except Exception:
+            return no_update
+
+    @app.callback(
+        Output("auth-modal", "is_open", allow_duplicate=True),
+        Output("auth-login-secure-input", "value"),
+        Output("auth-session-id-input", "value"),
+        Output("auth-modal-status", "children"),
+        Output("app-toast", "children", allow_duplicate=True),
+        Output("app-toast", "header", allow_duplicate=True),
+        Output("app-toast", "is_open", allow_duplicate=True),
+        Output("app-toast", "icon", allow_duplicate=True),
+        Input("auth-submit-btn", "n_clicks"),
+        State("auth-login-secure-input", "value"),
+        State("auth-session-id-input", "value"),
+        prevent_initial_call=True,
+    )
+    def submit_auth_credentials(n_clicks: Any, login_secure: Any, session_id: Any) -> Any:
+        _err = lambda msg: (True, no_update, no_update, msg, no_update, no_update, False, no_update)
+
+        if not n_clicks:
+            raise dash.exceptions.PreventUpdate
+
+        login_secure = (login_secure or "").strip()
+        session_id   = (session_id   or "").strip()
+
+        if not login_secure:
+            return _err("steamLoginSecure не может быть пустым.")
+        if not session_id:
+            return _err("Session ID не может быть пустым.")
+
+        import requests as _req
+        try:
+            r = _req.post(
+                f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/auth/steam",
+                json={"steamLoginSecure": login_secure, "session_id": session_id},
+                timeout=10,
+            )
+            data = r.json()
+            if not data.get("ok"):
+                return _err(f"Ошибка: {data.get('detail', 'неизвестная ошибка')}")
+        except Exception as exc:
+            return _err(f"Ошибка подключения к API: {exc}")
+
+        return (
+            False,   # close modal
+            "",      # clear steamLoginSecure input
+            "",      # clear session_id input
+            "",      # clear status message
+            "Учётные данные Steam сохранены. Воркер возобновит работу автоматически.",
+            "Авторизация обновлена",
+            True,
+            "success",
+        )
 
 
 # ─── PV-43: Cookie Hot-Swap Modal ─────────────────────────────────────────────

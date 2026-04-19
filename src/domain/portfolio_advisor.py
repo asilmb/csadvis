@@ -32,14 +32,13 @@ import statistics
 from datetime import UTC, datetime, timedelta
 
 from config import settings
+from src.domain.analytics.armory_advisor import DEFAULT_REWARD_CATALOG as _ARMORY_POOL
 from src.domain.events import SuperDealDetected
 from src.domain.lifecycle import classify_lifecycle, is_flip_eligible, is_invest_eligible
 from src.domain.services import SuperDealDomainService
 from src.domain.specifications import PriceWithinRange, ZScoreBelow
-from src.domain.value_objects import Amount, ROI
-from src.domain.correlation import compute_correlation_matrix
+from src.domain.value_objects import ROI, Amount
 from src.domain.wall_filter import compute_wall_metrics, get_best_buy_order
-from src.domain.analytics.armory_advisor import DEFAULT_REWARD_CATALOG as _ARMORY_POOL
 
 logger = logging.getLogger(__name__)
 

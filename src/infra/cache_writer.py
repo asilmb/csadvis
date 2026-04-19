@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
-from src.domain.value_objects import Amount, ROI
+from src.domain.value_objects import ROI, Amount
 
 logger = logging.getLogger(__name__)
 
@@ -153,10 +153,10 @@ def _fetch_order_book_data(
     """
     import asyncio
 
-    from src.domain.wall_filter import compute_wall_metrics, get_best_buy_order  # noqa: F401
+    from infra.steam_credentials import get_login_secure
     from scrapper.nameid_cache import load_nameid_cache, save_nameid_cache
     from scrapper.steam.client import SteamMarketClient
-    from infra.steam_credentials import get_login_secure
+    from src.domain.wall_filter import compute_wall_metrics, get_best_buy_order  # noqa: F401
 
     if not get_login_secure():
         logger.debug("_fetch_order_book_data: no Steam cookie — skipping wall fetch")
@@ -221,13 +221,13 @@ def refresh_cache(db: Session) -> None:
     Does NOT call db.commit() — the caller owns the transaction.
     On any engine error the exception propagates so the caller can log + rollback.
     """
+    from scrapper.steam_wallet import get_saved_balance
     from src.domain.connection import SessionLocal
-    from src.domain.models import DimContainer, DimUserPosition, FactContainerPrice
     from src.domain.investment import compute_all_investment_signals
+    from src.domain.models import DimContainer, DimUserPosition, FactContainerPrice
+    from src.domain.portfolio import get_portfolio_data
     from src.domain.portfolio_advisor import allocate_portfolio
     from src.domain.trade_advisor import compute_trade_advice
-    from scrapper.steam_wallet import get_saved_balance
-    from src.domain.portfolio import get_portfolio_data
 
     # ── Gather inputs ──────────────────────────────────────────────────────────
 

@@ -173,6 +173,12 @@ class TestCheckPortfolioCorrelation:
         warning = check_portfolio_correlation("X", "Y", pairs)
         assert warning is not None
 
+    def test_custom_threshold_triggers_at_lower_value(self) -> None:
+        """With threshold=0.50, a pair with r=0.60 that would be ignored at default 0.70 now warns."""
+        pairs = [("A", "B", 0.60)]
+        assert check_portfolio_correlation("A", "B", pairs, threshold=0.50) is not None
+        assert check_portfolio_correlation("A", "B", pairs, threshold=0.70) is None
+
 
 # ─── _resample_pair ──────────────────────────────────────────────────────────
 
@@ -276,11 +282,10 @@ class TestToLogReturns:
         assert result[1] == pytest.approx(math.log(2.0), abs=1e-9)
 
     def test_zero_price_yields_zero_return(self) -> None:
-        # zero price → cannot compute log → yields 0.0
+        # zero-price pairs are dropped entirely (can't compute log, synthetic zeros bias correlation)
         prices = [1.0, 0.0, 1.0]
         result = _to_log_returns(prices)
-        assert result[0] == 0.0  # 0/1 → not > 0, so 0.0
-        assert result[1] == 0.0  # 1/0 → not > 0 in prev, so 0.0
+        assert result == []  # both pairs involve a zero — all dropped
 
     def test_single_element_returns_empty(self) -> None:
         result = _to_log_returns([5.0])

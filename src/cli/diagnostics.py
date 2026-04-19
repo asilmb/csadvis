@@ -220,9 +220,9 @@ def cmd_validate_prices(args) -> None:
     """Check top-N containers by invest signal score against live Steam Market API prices."""
     import asyncio
 
+    from scrapper.steam.client import SteamMarketClient
     from src.domain.connection import init_db
     from src.domain.investment import compute_all_investment_signals
-    from scrapper.steam.client import SteamMarketClient
 
     top_n: int = args.top
 
@@ -372,16 +372,17 @@ def cmd_monitor(args) -> None:
             print(f"  Last error  : {state['last_error']}")
     except Exception as exc:
         print(f"  [ERROR] Could not reach API: {exc}")
-        print(f"  Make sure the API server is running (python src/main.py api)")
+        print("  Make sure the API server is running (python src/main.py api)")
     print()
 
 
 def cmd_validate_top(args) -> None:
     """Validate top-N flip candidates against live Steam Market API prices."""
     import asyncio
+
+    from scrapper.steam.client import SteamMarketClient
     from src.domain.connection import init_db
     from src.domain.investment import compute_all_investment_signals
-    from scrapper.steam.client import SteamMarketClient
 
     top_n: int = args.top
 
