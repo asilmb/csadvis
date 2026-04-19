@@ -144,6 +144,12 @@ async def _wait_for_auth() -> bool:
     _state.current_type = "PAUSED_AUTH"
     logger.warning("work_queue: auth credentials missing — worker paused (max %ds)", _AUTH_WAIT_TIMEOUT_S)
 
+    try:
+        from infra.redis_client import get_redis as _get_redis
+        _get_redis().set("cs2:worker:auth_paused", "1")
+    except Exception:
+        pass
+
     ev = _get_auth_event()
     ev.clear()
 
@@ -156,6 +162,11 @@ async def _wait_for_auth() -> bool:
             logger.error("work_queue: PAUSED_AUTH timed out after %ds — skipping job", _AUTH_WAIT_TIMEOUT_S)
             _state.auth_paused = False
             _state.last_error = "PAUSED_AUTH timed out"
+            try:
+                from infra.redis_client import get_redis as _get_redis
+                _get_redis().delete("cs2:worker:auth_paused")
+            except Exception:
+                pass
             return False
         try:
             await asyncio.wait_for(ev.wait(), timeout=min(2.0, remaining))
@@ -164,6 +175,11 @@ async def _wait_for_auth() -> bool:
 
     ev.clear()
     _state.auth_paused = False
+    try:
+        from infra.redis_client import get_redis as _get_redis
+        _get_redis().delete("cs2:worker:auth_paused")
+    except Exception:
+        pass
     logger.info("work_queue: auth credentials restored — resuming worker")
     return True
 

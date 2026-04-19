@@ -319,8 +319,8 @@ def create_dash_app() -> dash.Dash:
             ),
             # Cookie status polling — 30s interval
             dcc.Interval(id="cookie-status-interval", interval=30_000, n_intervals=0),
-            # Auth-pause polling — 3s, always on, checks worker PAUSED_AUTH state
-            dcc.Interval(id="auth-check-interval", interval=3_000, n_intervals=0),
+            # Auth-pause polling — enabled only when cs2:worker:auth_paused Redis key exists
+            dcc.Interval(id="auth-check-interval", interval=3_000, n_intervals=0, disabled=True),
             # Auth-Pause Modal — opens when worker enters PAUSED_AUTH (no credentials)
             dbc.Modal(
                 id="auth-modal",
