@@ -76,6 +76,25 @@ _COOKIE_TTL   = 86_400   # 24 h — refresh on every successful batch
 # steamLoginSecure is deliberately excluded — it comes from the credential store.
 _PERSIST_PREFIXES = ("steamMachineAuth", "sessionid", "steamCountry", "timezoneOffset")
 
+# Navigation-style headers for noise page requests (not XHR — must look like real page load).
+# Sec-Fetch-Mode: navigate / Dest: document distinguish a page visit from an API call.
+_NOISE_HEADERS: dict[str, str] = {
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/avif,image/webp,image/apng,*/*;q=0.8,"
+        "application/signed-exchange;v=b3;q=0.7"
+    ),
+    "Accept-Language": "ru-RU,ru;q=0.9,kk;q=0.8,en-US;q=0.7,en;q=0.6",
+    "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
+    "Referer": "https://steamcommunity.com/market/",
+    "Upgrade-Insecure-Requests": "1",
+}
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -281,7 +300,7 @@ class SteamMarketClient:
         return {
             # ── Content negotiation ────────────────────────────────────────────
             "Accept": "application/json, text/javascript, */*; q=0.01",
-            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Language": "ru-RU,ru;q=0.9,kk;q=0.8,en-US;q=0.7,en;q=0.6",
             # ── Steam-specific ─────────────────────────────────────────────────
             "Referer": "https://steamcommunity.com/market/",
             "X-Requested-With": "XMLHttpRequest",
@@ -313,6 +332,25 @@ class SteamMarketClient:
             raise exc  # callers handle network errors per-method
 
     # ── Public API ────────────────────────────────────────────────────────────
+
+    async def fetch_noise_page(self, item_name: str | None = None) -> None:
+        """
+        Non-data navigation request simulating real user browsing.
+
+        Visits a market listing page (what the browser loads before calling any
+        JSON API) or the market home. Uses document-navigation headers, not XHR.
+        Failure is silently ignored — this is purely a stealth measure.
+        """
+        if _is_emergency_blocked():
+            return
+        await self._ensure_session()
+        import random as _random
+        url = (_LISTINGS_URL + item_name) if item_name else (_BASE + "/market/")
+        try:
+            await self._session.get(url, headers=_NOISE_HEADERS, timeout=20)
+            logger.debug("[Stealth] noise page fetched", url=url[:80])
+        except Exception:
+            pass
 
     async def fetch_history(self, market_hash_name: str) -> list[dict]:
         """

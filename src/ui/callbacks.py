@@ -138,23 +138,31 @@ def register_callbacks(app: Any) -> None:
     # ── Task-completion poller: reads Redis key, updates store on change ──────
     @app.callback(
         Output("task-done-ts", "data"),
-        Output("auth-check-interval", "disabled"),
         Input("task-poll-interval", "n_intervals"),
         State("task-done-ts", "data"),
         prevent_initial_call=False,
     )
     def poll_task_done(n: Any, current_ts: Any) -> Any:
-        ts = None
-        auth_paused = False
         try:
             from infra.redis_client import get_redis
-            r = get_redis()
-            ts = r.get("cs2:ui:last_task_done")
-            auth_paused = bool(r.exists("cs2:worker:auth_paused"))
+            ts = get_redis().get("cs2:ui:last_task_done")
         except Exception:
-            pass
-        ts_out = ts if (ts and ts != current_ts) else no_update
-        return ts_out, not auth_paused
+            ts = None
+        if ts and ts != current_ts:
+            return ts
+        raise dash.exceptions.PreventUpdate
+
+    @app.callback(
+        Output("auth-check-interval", "disabled"),
+        Input("task-poll-interval", "n_intervals"),
+        prevent_initial_call=False,
+    )
+    def toggle_auth_interval(_n: Any) -> bool:
+        try:
+            from infra.redis_client import get_redis
+            return not bool(get_redis().exists("cs2:worker:auth_paused"))
+        except Exception:
+            return True
 
     @app.callback(
         Output("raw-items-store", "data"),

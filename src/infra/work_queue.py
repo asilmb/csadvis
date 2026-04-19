@@ -262,8 +262,32 @@ async def _handle_price_poll(job: dict) -> None:
     _state.progress_total = len(names)
     _state.progress_started_at = datetime.now(UTC).replace(tzinfo=None)
     _rate_limited = False
-    async with SteamMarketClient() as client:
+
+    from scrapper.steam_rate_limit import human_delay
+
+    # Stealth counters
+    noise_counter = 0
+    noise_trigger = random.randint(5, 12)
+    session_break_at = random.randint(45, 70)
+    items_this_session = 0
+
+    # Initial random pause — avoids instant-start bot pattern
+    await _asyncio.sleep(random.uniform(3.0, 9.0))
+
+    client = SteamMarketClient()
+    await client.__aenter__()
+    try:
         for cid, name in names:
+            # Session break — close/reopen TCP connection
+            if items_this_session > 0 and items_this_session >= session_break_at:
+                logger.debug("[Stealth] price_poll session break at %d items", items_this_session)
+                await client.__aexit__(None, None, None)
+                await _asyncio.sleep(random.uniform(25.0, 70.0))
+                client = SteamMarketClient()
+                await client.__aenter__()
+                items_this_session = 0
+                session_break_at = random.randint(45, 70)
+
             try:
                 api_name = to_api_name(name)
             except InvalidHashNameError:
@@ -287,7 +311,6 @@ async def _handle_price_poll(job: dict) -> None:
                     raw_vol = overview.get("volume", "0")
                     volume = int(str(raw_vol).replace(",", "").strip() or "0")
                     if include_blacklisted:
-                        # Save directly — bypass process_new_price blacklist check
                         from src.domain.sql_repositories import SqlAlchemyPriceRepository
                         with SessionLocal() as _db:
                             repo = SqlAlchemyPriceRepository(_db)
@@ -319,7 +342,7 @@ async def _handle_price_poll(job: dict) -> None:
                         ready = await _wait_for_auth()
                         if ready:
                             _state.current_type = "price_poll"
-                            retry = True  # replay this container with fresh credentials
+                            retry = True
                         else:
                             logger.error("price_poll: giving up after auth timeout")
                             return
@@ -327,6 +350,8 @@ async def _handle_price_poll(job: dict) -> None:
                         logger.warning("price_poll: error for %s — %s", name, exc)
 
             _state.progress_current += 1
+            items_this_session += 1
+
             if _is_emergency_blocked():
                 logger.warning(
                     "price_poll: stopping — Steam 429 block active, session preserved for resume"
@@ -335,8 +360,19 @@ async def _handle_price_poll(job: dict) -> None:
                 break
             if session_id is not None:
                 await _asyncio.to_thread(tick_session, session_id)
-            # Non-deterministic delay between requests to avoid Steam rate-limiting
-            await _asyncio.sleep(random.uniform(8.0, 12.0))
+
+            # Noise page — every 5–12 items visit a listing page (real browsing signal)
+            noise_counter += 1
+            if noise_counter >= noise_trigger:
+                await client.fetch_noise_page(item_name=api_name)
+                await _asyncio.sleep(random.uniform(2.0, 5.0))
+                noise_counter = 0
+                noise_trigger = random.randint(5, 12)
+
+            # Human-like inter-request delay with heavy tail
+            await _asyncio.sleep(human_delay())
+    finally:
+        await client.__aexit__(None, None, None)
 
     _remaining = _state.progress_total - _state.progress_current
     _state.progress_current = 0
