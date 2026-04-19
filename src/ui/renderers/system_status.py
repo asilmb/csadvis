@@ -199,6 +199,8 @@ def render_system_status(health=None) -> html.Div:
     def _btn_group(*buttons) -> html.Div:
         return html.Div(list(buttons), style={"display": "flex", "gap": "6px", "flexWrap": "wrap"})
 
+    last_ping = getattr(health, "last_ping", None)
+
     # ── Action buttons ────────────────────────────────────────────────────────
     btn_row = html.Div([
         dbc.Row([
@@ -228,6 +230,13 @@ def render_system_status(health=None) -> html.Div:
                     dbc.Button([html.I(className="fa fa-trash me-1"), "Очистить"], id="btn-clear-queue", color="danger", outline=True, size="sm", n_clicks=0),
                 ),
             ]), width="auto"),
+            dbc.Col(html.Div([
+                _group_label("Диагностика"),
+                _btn_group(
+                    dbc.Button("Ping Steam", id="btn-ping-steam", color="secondary", outline=True, size="sm", n_clicks=0),
+                ),
+                html.Div(id="ping-steam-last", children=_ping_label(last_ping), style={"marginTop": "4px"}),
+            ]), width="auto"),
             dbc.Col(html.Span(id="health-action-msg", style={"color": _MUTED, "fontSize": "12px", "paddingTop": "18px", "display": "block"}), width="auto"),
         ], className="g-3 align-items-start", style={"marginBottom": "20px"}),
         dbc.Tooltip("Загружает актуальный инвентарь Steam", target="btn-sync-inventory", placement="bottom"),
@@ -236,6 +245,7 @@ def render_system_status(health=None) -> html.Div:
         dbc.Tooltip("Загружает историю цен только для контейнеров с открытыми позициями", target="btn-backfill-active", placement="bottom"),
         dbc.Tooltip("Загружает историю цен для всех контейнеров (~60–110 мин)", target="btn-backfill-all", placement="bottom"),
         dbc.Tooltip("Очищает очередь задач воркера", target="btn-clear-queue", placement="bottom"),
+        dbc.Tooltip("Проверяет токен и наличие блокировки Steam", target="btn-ping-steam", placement="bottom"),
     ])
 
     # ── Blacklisted containers ─────────────────────────────────────────────────

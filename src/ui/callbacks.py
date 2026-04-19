@@ -103,6 +103,17 @@ def _get_system_health():
     except Exception:
         pass
 
+    last_ping = None
+    try:
+        r = _req.get(
+            f"http://{_s.api_internal_host}:{_s.api_port}/api/v1/system/last-ping",
+            timeout=3,
+        )
+        if r.ok:
+            last_ping = r.json()
+    except Exception:
+        pass
+
     from datetime import UTC, datetime
 
     class _Health:
@@ -116,6 +127,7 @@ def _get_system_health():
 
     _Health.cooldown_until = cooldown_until
     _Health.scrape_sessions = scrape_sessions
+    _Health.last_ping = last_ping
 
     return _Health()
 
@@ -815,6 +827,52 @@ def register_callbacks(app: Any) -> None:
             return f"Ошибка: {data.get('error', '?')}"
         except Exception as exc:
             return str(exc)
+
+    @app.callback(
+        Output("ping-steam-last", "children"),
+        Output("app-toast", "children", allow_duplicate=True),
+        Output("app-toast", "header", allow_duplicate=True),
+        Output("app-toast", "is_open", allow_duplicate=True),
+        Output("app-toast", "icon", allow_duplicate=True),
+        Input("btn-ping-steam", "n_clicks"),
+        running=[
+            (Output("btn-ping-steam", "disabled"), True, False),
+            (Output("btn-ping-steam", "children"), [dbc.Spinner(size="sm"), " Пинг…"], "Ping Steam"),
+        ],
+        prevent_initial_call=True,
+    )
+    def do_ping_steam(n: Any) -> tuple:
+        if not n:
+            raise dash.exceptions.PreventUpdate
+        import requests as _req
+        from ui.renderers.system_status import _ping_label
+        try:
+            r = _req.post(
+                f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/system/ping-steam",
+                timeout=35,
+            )
+            data = r.json()
+        except Exception as exc:
+            label = [html.Span(f"⚠ {str(exc)[:80]}", style={"color": "#e07b39", "fontSize": "11px"})]
+            return label, str(exc)[:100], "Ping Steam", True, "danger"
+
+        status = data.get("status")
+        label = _ping_label(data)
+        if status == "ok":
+            return label, "Steam доступен ✓", "Ping Steam", True, "success"
+        if status == "blocked":
+            blocked_until = data.get("blocked_until", "?")
+            remaining_s = data.get("remaining_s", 0)
+            if remaining_s >= 3600:
+                r_str = f"{remaining_s // 3600}ч {(remaining_s % 3600) // 60}м"
+            elif remaining_s >= 60:
+                r_str = f"{remaining_s // 60} мин"
+            else:
+                r_str = f"{remaining_s} сек"
+            return label, f"Blocked до {blocked_until} ({r_str})", "Steam заблокирован", True, "warning"
+        if status == "no_credentials":
+            return label, "Токен не настроен", "Ping Steam", True, "danger"
+        return label, data.get("detail", "Ошибка запроса"), "Ping Steam", True, "danger"
 
     @app.callback(
         Output("steam-history-status", "children"),
