@@ -90,6 +90,9 @@ def _render_portfolio(
             ]
         )
 
+    containers = _get_containers()
+    inv_items = inventory_data or []
+
     # CACHE-1: try reading cached plan first — avoids full engine recompute on every render
     from src.domain.portfolio import get_cached_portfolio_advice
 
@@ -99,9 +102,7 @@ def _render_portfolio(
         plan = _cached_plan
     else:
         # Cache miss (cold start or first run) — fall through to full live compute
-        containers = _get_containers()
         price_data = _get_current_steam_prices()
-        inv_items = inventory_data or []
 
         # F-03: load user positions for 7-day trade ban gate
         _pos_db = SessionLocal()

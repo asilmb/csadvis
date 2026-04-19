@@ -68,8 +68,8 @@ def _get_system_health():
             timeout=3,
         )
         worker_state = r.json() if r.ok else {}
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.debug("health: queue-status unavailable: %s", _e)
 
     from src.domain.connection import SessionLocal
     from src.domain.models import DimContainer
@@ -78,8 +78,8 @@ def _get_system_health():
         with SessionLocal() as db:
             bl = db.query(DimContainer).filter(DimContainer.is_blacklisted == 1).all()
             blacklisted = [{"container_id": str(c.container_id), "container_name": c.container_name} for c in bl]
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.debug("health: blacklist query failed: %s", _e)
 
     cooldown_until = None
     scrape_sessions = []
@@ -91,8 +91,8 @@ def _get_system_health():
         if r.ok:
             cd = r.json()
             cooldown_until = cd.get("cooldown_until_fmt") if cd.get("active") else None
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.debug("health: cooldown unavailable: %s", _e)
     try:
         r = _req.get(
             f"http://{_s.api_internal_host}:{_s.api_port}/api/v1/scrape-sessions/",
@@ -100,8 +100,8 @@ def _get_system_health():
         )
         if r.ok:
             scrape_sessions = r.json()
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.debug("health: scrape-sessions unavailable: %s", _e)
 
     last_ping = None
     try:
@@ -111,8 +111,8 @@ def _get_system_health():
         )
         if r.ok:
             last_ping = r.json()
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.debug("health: last-ping unavailable: %s", _e)
 
     from datetime import UTC, datetime
 

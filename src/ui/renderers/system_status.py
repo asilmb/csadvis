@@ -293,7 +293,6 @@ def render_system_status(health=None) -> html.Div:
             ),
             style={**_CARD, "marginBottom": "20px"},
         ),
-        html.Div(id="blacklist-action-msg", style={"color": _MUTED, "fontSize": "12px", "marginBottom": "16px"}),
     ])
 
     # ── Live progress bar (shown while worker is busy) ────────────────────────

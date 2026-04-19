@@ -9880,3 +9880,7 @@ ValueError: invalid literal for int() with base 10: 'fd63a22e-1ac9-40af-8042-3c7
 {"event": "work_queue: worker cancelled \u2014 shutting down", "logger": "infra.work_queue", "level": "info", "timestamp": "2026-04-19T10:10:58.476676Z"}
 {"service": "api", "event": "db_pool_closed", "logger": "__main__", "level": "info", "timestamp": "2026-04-19T10:10:58.478650Z"}
 {"service": "api", "event": "sigterm_received", "logger": "__main__", "level": "info", "timestamp": "2026-04-19T10:10:58.480552Z"}
+2026-04-19 10:13:23,239  INFO      src.domain.connection — БД готова (PostgreSQL @ db:5432/cs2)
+2026-04-19 10:13:23,250  INFO      src.ui.app — CS2 Dashboard v2.3.1 starting
+2026-04-19 10:13:23,268  INFO      dash.dash — Dash is running on http://0.0.0.0:8050/
+
