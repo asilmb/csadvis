@@ -295,31 +295,6 @@ def render_system_status(health=None) -> html.Div:
         ),
     ])
 
-    # ── Live progress bar (shown while worker is busy) ────────────────────────
-    progress_section = html.Div(
-        id="worker-progress-section",
-        children=_render_progress(worker),
-        style={"marginBottom": "16px"},
-    )
-
-    # ── Refresh button ─────────────────────────────────────────────────────────
-    refresh_btn = html.Div([
-        dbc.Button(
-            [html.I(className="fa fa-refresh me-1"), "Обновить"],
-            id="btn-refresh-system",
-            size="sm", color="secondary", outline=True,
-            n_clicks=0,
-            style={"fontSize": "11px", "padding": "1px 8px"},
-        ),
-        # Polls worker state every 3 s while visible; disabled when idle
-        dcc.Interval(
-            id="worker-progress-interval",
-            interval=3_000,
-            n_intervals=0,
-            disabled=not worker.get("busy") and worker.get("queue_size", 0) == 0,
-        ),
-    ], style={"display": "flex", "gap": "10px", "alignItems": "center", "marginBottom": "16px"})
-
     footer = html.Div(
         f"Last refresh: {health.timestamp}",
         style={"color": _MUTED, "fontSize": "11px", "marginTop": "8px"},
@@ -391,14 +366,72 @@ def render_system_status(health=None) -> html.Div:
         html.Div(id="session-action-msg", style={"color": _MUTED, "fontSize": "12px", "marginBottom": "16px"}),
     ])
 
+    # ── Task history ──────────────────────────────────────────────────────────
+    history = getattr(health, "task_history", [])
+
+    def _fmt_duration(s: int) -> str:
+        if s < 60:
+            return f"{s}s"
+        return f"{s // 60}m {s % 60}s"
+
+    def _history_row(t: dict) -> html.Tr:
+        status = t.get("status", "?")
+        color = {
+            "ok": _GREEN,
+            "error": _RED,
+            "cancelled": _ORANGE,
+        }.get(status, _MUTED)
+        started = (t.get("started_at") or "")[:16].replace("T", " ")
+        detail = t.get("detail") or t.get("error") or ""
+        detail_color = _RED if t.get("error") else _MUTED
+        return html.Tr([
+            html.Td(t.get("type", "?"), style={"color": _TEXT, "fontSize": "12px"}),
+            html.Td(status.upper(), style={"color": color, "fontSize": "11px", "fontWeight": "bold"}),
+            html.Td(started, style={"color": _MUTED, "fontSize": "11px"}),
+            html.Td(_fmt_duration(t.get("duration_s", 0)), style={"color": _MUTED, "fontSize": "11px"}),
+            html.Td(
+                detail,
+                style={"color": detail_color, "fontSize": "10px", "maxWidth": "260px",
+                       "overflow": "hidden", "textOverflow": "ellipsis", "whiteSpace": "nowrap"},
+            ),
+        ])
+
+    history_section = html.Div([
+        html.H6("История задач", style={"color": _MUTED, "marginBottom": "8px"}),
+        html.Div(
+            dbc.Table(
+                [
+                    html.Thead(html.Tr([
+                        html.Th("Тип", style={"color": _MUTED}),
+                        html.Th("Статус", style={"color": _MUTED}),
+                        html.Th("Запуск", style={"color": _MUTED}),
+                        html.Th("Время", style={"color": _MUTED}),
+                        html.Th("Детали", style={"color": _MUTED}),
+                    ])),
+                    html.Tbody(
+                        [_history_row(t) for t in history]
+                        if history else [
+                            html.Tr(html.Td(
+                                "Нет истории",
+                                colSpan=5,  # 5 columns: type, status, start, duration, detail
+                                style={"color": _MUTED, "textAlign": "center", "fontSize": "12px"},
+                            ))
+                        ]
+                    ),
+                ],
+                bordered=False, size="sm",
+            ),
+            style={**_CARD, "marginBottom": "20px"},
+        ),
+    ])
+
     return html.Div([
         html.H6("Liveness", style={"color": _MUTED, "marginBottom": "12px"}),
         liveness,
         cooldown_banner,
-        progress_section,
-        refresh_btn,
         html.H6("Actions", style={"color": _MUTED, "marginBottom": "8px"}),
         btn_row,
+        history_section,
         sessions_section,
         blacklist_section,
         footer,

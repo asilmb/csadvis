@@ -86,12 +86,6 @@ services:
     ports:
       - "${DASHBOARD_PORT:-8050}:8050"
 
-  # ── Scrapper (one-shot market sync) ──────────────────────────────────────────
-  scrapper:
-    <<: *app
-    command: ["scrapper"]
-    restart: "no"
-
   # ── Test runner ───────────────────────────────────────────────────────────────
   test:
     build:

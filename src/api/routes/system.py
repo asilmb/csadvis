@@ -61,7 +61,8 @@ async def cancel_task_endpoint(req: CancelTaskRequest) -> dict:
     try:
         import asyncio as _asyncio
 
-        from infra.work_queue import _queue_shadow, enqueue, get_queue
+        from infra.work_queue import _queue_shadow, enqueue, get_queue, request_cancel
+        request_cancel()
         q = get_queue()
         removed = 0
         kept: list[dict] = []
@@ -86,6 +87,12 @@ async def cancel_task_endpoint(req: CancelTaskRequest) -> dict:
     except Exception as exc:
         logger.warning("cancel_task: %s", exc)
         return {"ok": False, "removed": 0, "error": str(exc)}
+
+
+@router.get("/task-history")
+def task_history_endpoint() -> list:
+    from infra.work_queue import get_task_history
+    return get_task_history()
 
 
 @router.get("/last-ping")

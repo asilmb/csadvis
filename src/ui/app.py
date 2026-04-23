@@ -28,7 +28,7 @@ from ui.helpers import (
 
 logger = logging.getLogger(__name__)
 
-_VERSION = "2.3.1"  # bump this to confirm new code is running
+_VERSION = "2.3.2"  # bump this to confirm new code is running
 
 # ─── Design token aliases (kept here for layout code) ──────────────────────────
 _BG_WARN = "#3d2b00"  # stale calendar warning background (not in theme)
@@ -250,6 +250,8 @@ def create_dash_app() -> dash.Dash:
                                     ),
                                 ],
                             ),
+                            # Global worker status bar — always visible regardless of active tab
+                            html.Div(id="global-worker-status", style={"marginTop": "6px"}),
                             # Controls below tabs — avoids layout shift when shown/hidden (UX-11)
                             html.Div(
                                 id="portfolio-controls-panel",
@@ -275,6 +277,28 @@ def create_dash_app() -> dash.Dash:
                                             ),
                                         ),
                                     ),
+                                ],
+                            ),
+                            html.Div(
+                                id="system-controls-panel",
+                                style={"display": "none"},
+                                children=[
+                                    html.Div(id="worker-progress-section", style={"marginBottom": "16px"}),
+                                    html.Div([
+                                        dbc.Button(
+                                            [html.I(className="fa fa-refresh me-1"), "Обновить"],
+                                            id="btn-refresh-system",
+                                            size="sm", color="secondary", outline=True,
+                                            n_clicks=0,
+                                            style={"fontSize": "11px", "padding": "1px 8px"},
+                                        ),
+                                        dcc.Interval(
+                                            id="worker-progress-interval",
+                                            interval=3_000,
+                                            n_intervals=0,
+                                            disabled=True,
+                                        ),
+                                    ], style={"display": "flex", "gap": "10px", "alignItems": "center", "marginBottom": "16px"}),
                                 ],
                             ),
                             dcc.Loading(

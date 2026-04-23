@@ -1,3 +1,42 @@
+/* ── Dark dropdown (dcc.Dropdown with className="dark-dropdown") ── */
+.dark-dropdown .Select-control,
+.dark-dropdown .Select-menu-outer {
+    background-color: #1a1a2e !important;
+    border-color: #2a2a3e !important;
+    color: #e0e0e0 !important;
+}
+
+.dark-dropdown .Select-value-label,
+.dark-dropdown .Select-placeholder {
+    color: #e0e0e0 !important;
+    font-size: 12px !important;
+}
+
+.dark-dropdown .Select-option {
+    background-color: #1a1a2e !important;
+    color: #e0e0e0 !important;
+    font-size: 12px !important;
+}
+
+.dark-dropdown .Select-option.is-focused,
+.dark-dropdown .Select-option.is-selected {
+    background-color: #2a2a3e !important;
+    color: #ffffff !important;
+}
+
+.dark-dropdown .Select-arrow {
+    border-top-color: #888 !important;
+}
+
+.dark-dropdown .Select-input input {
+    color: #e0e0e0 !important;
+}
+
+.dark-dropdown .Select--single > .Select-control .Select-value {
+    color: #e0e0e0 !important;
+}
+
+/* ────────────────────────────────────────────────────────────────── */
 .sidebar-sort-dropdown .Select-control,
 .sidebar-sort-dropdown .Select-menu-outer {
     background-color: #1a1a2e !important;

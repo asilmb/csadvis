@@ -135,7 +135,12 @@ def _persist_inventory(items: list[dict]):
     return rec
 
 
-async def run_backfill_history(names: list[str] | None = None, session_id: int | None = None) -> dict:
+async def run_backfill_history(
+    names: list[str] | None = None,
+    session_id: int | None = None,
+    on_progress: object = None,
+    should_stop: object = None,
+) -> dict:
     """
     Fetch and persist daily price history for containers.
 
@@ -152,7 +157,7 @@ async def run_backfill_history(names: list[str] | None = None, session_id: int |
     names_filter: list[str] = list(names or [])
 
     with SessionLocal() as db:
-        q = db.query(DimContainer).filter(DimContainer.is_blacklisted == False)
+        q = db.query(DimContainer).filter(DimContainer.is_blacklisted == 0)
         if names_filter:
             q = q.filter(DimContainer.container_name.in_(names_filter))
         containers = q.all()
@@ -161,7 +166,10 @@ async def run_backfill_history(names: list[str] | None = None, session_id: int |
 
         max_ts_rows = (
             db.query(FactContainerPrice.container_id, func.max(FactContainerPrice.timestamp))
-            .filter(FactContainerPrice.container_id.in_(list(id_map.values())))
+            .filter(
+                FactContainerPrice.container_id.in_(list(id_map.values())),
+                FactContainerPrice.source == "steam_market",
+            )
             .group_by(FactContainerPrice.container_id)
             .all()
         )
@@ -186,15 +194,20 @@ async def run_backfill_history(names: list[str] | None = None, session_id: int |
         [n for n in names_filter if n in id_map] if names_filter else list(id_map.keys())
     )
     _random.shuffle(ordered_names)
+    _total = len(ordered_names)
+
+    if on_progress:
+        on_progress(0, _total, "")
 
     if session_id is None:
         session_id = await asyncio.to_thread(create_session, "backfill_history", ordered_names)
 
-    logger.info("backfill_history: processing %d containers", len(ordered_names))
+    logger.info("backfill_history: processing %d containers", _total)
 
     from datetime import date
     saved_total = 0
     errors = 0
+    skipped_empty = 0
     _rate_limited = False
 
     # Stealth counters
@@ -214,81 +227,90 @@ async def run_backfill_history(names: list[str] | None = None, session_id: int |
 
     await client.__aenter__()
     try:
-        for name in ordered_names:
-            cid = id_map[name]
-
-            # Session break — close/reopen TCP connection to avoid long-lived session fingerprint
-            if items_this_session > 0 and items_this_session >= session_break_at:
-                logger.debug("[Stealth] backfill session break at %d items", items_this_session)
-                await client.__aexit__(None, None, None)
-                await asyncio.sleep(_random.uniform(25.0, 70.0))
-                client = SteamMarketClient()
-                await client.__aenter__()
-                items_this_session = 0
-                session_break_at = _random.randint(45, 70)
-
+        for _idx, name in enumerate(ordered_names):
+            if should_stop and should_stop():
+                logger.info("backfill_history: cancelled by request")
+                break
             try:
-                api_name = to_api_name(name)
-            except InvalidHashNameError as exc:
-                logger.warning("backfill_history: invalid name %s — %s", name, exc)
-                errors += 1
-                continue
+                cid = id_map[name]
 
-            try:
-                rows: list[dict] = await client.fetch_history(api_name)
-            except Exception as exc:
-                logger.error("backfill_history: fetch error for %s — %s", name, exc)
-                errors += 1
-                continue
+                # Session break — close/reopen TCP connection to avoid long-lived session fingerprint
+                if items_this_session > 0 and items_this_session >= session_break_at:
+                    logger.debug("[Stealth] backfill session break at %d items", items_this_session)
+                    await client.__aexit__(None, None, None)
+                    await asyncio.sleep(_random.uniform(25.0, 70.0))
+                    client = SteamMarketClient()
+                    await client.__aenter__()
+                    items_this_session = 0
+                    session_break_at = _random.randint(45, 70)
 
-            items_this_session += 1
+                try:
+                    api_name = to_api_name(name)
+                except InvalidHashNameError as exc:
+                    logger.warning("backfill_history: invalid name %s — %s", name, exc)
+                    errors += 1
+                    continue
 
-            if not rows:
-                if _is_emergency_blocked():
-                    logger.warning(
-                        "backfill_history: stopping — Steam 429 block active, session preserved for resume"
-                    )
-                    _rate_limited = True
-                    break
+                try:
+                    rows: list[dict] = await client.fetch_history(api_name)
+                except Exception as exc:
+                    logger.error("backfill_history: fetch error for %s — %s", name, exc)
+                    errors += 1
+                    continue
+
+                items_this_session += 1
+
+                if not rows:
+                    if _is_emergency_blocked():
+                        logger.warning(
+                            "backfill_history: stopping — Steam 429 block active, session preserved for resume"
+                        )
+                        _rate_limited = True
+                        break
+                    logger.debug("backfill_history: empty rows for %s (cookie may be expired or item delisted)", name)
+                    skipped_empty += 1
+                    await asyncio.sleep(human_delay())
+                    continue
+
+                existing_max: date = max_dates.get(name, date.min)
+                new_rows = [r for r in rows if r["date"].date() > existing_max]
+
+                if not new_rows:
+                    await asyncio.sleep(human_delay())
+                    continue
+
+                try:
+                    saved = await asyncio.to_thread(_save_history_rows, cid, new_rows)
+                    saved_total += saved
+                    max_dates[name] = max(r["date"].date() for r in new_rows)
+                except Exception as exc:
+                    logger.error("backfill_history: DB write error for %s — %s", name, exc)
+                    errors += 1
+
+                await asyncio.to_thread(tick_session, session_id)
+
+                # Noise page — visit listing page we just fetched (looks like real browsing)
+                noise_counter += 1
+                if noise_counter >= noise_trigger:
+                    await client.fetch_noise_page(item_name=api_name)
+                    await asyncio.sleep(_random.uniform(2.0, 5.0))
+                    noise_counter = 0
+                    noise_trigger = _random.randint(5, 12)
+
+                # Human-like inter-request delay
                 await asyncio.sleep(human_delay())
-                continue
-
-            existing_max: date = max_dates.get(name, date.min)
-            new_rows = [r for r in rows if r["date"].date() > existing_max]
-
-            if not new_rows:
-                await asyncio.sleep(human_delay())
-                continue
-
-            try:
-                saved = await asyncio.to_thread(_save_history_rows, cid, new_rows)
-                saved_total += saved
-                max_dates[name] = max(r["date"].date() for r in new_rows)
-            except Exception as exc:
-                logger.error("backfill_history: DB write error for %s — %s", name, exc)
-                errors += 1
-
-            await asyncio.to_thread(tick_session, session_id)
-
-            # Noise page — visit listing page we just fetched (looks like real browsing)
-            noise_counter += 1
-            if noise_counter >= noise_trigger:
-                await client.fetch_noise_page(item_name=api_name)
-                await asyncio.sleep(_random.uniform(2.0, 5.0))
-                noise_counter = 0
-                noise_trigger = _random.randint(5, 12)
-
-            # Human-like inter-request delay
-            await asyncio.sleep(human_delay())
+            finally:
+                if on_progress:
+                    on_progress(_idx + 1, _total, name)
     finally:
         await client.__aexit__(None, None, None)
 
     if _rate_limited:
-        logger.warning("backfill_history: aborted due to Steam 429 — saved=%d errors=%d", saved_total, errors)
-        return {"status": "rate_limited", "saved": saved_total, "errors": errors}
+        logger.warning("backfill_history: aborted due to Steam 429 — saved=%d errors=%d skipped_empty=%d", saved_total, errors, skipped_empty)
+        return {"status": "rate_limited", "saved": saved_total, "errors": errors, "skipped_empty": skipped_empty}
     await asyncio.to_thread(finish_session, session_id)
-    logger.info("backfill_history: done — saved=%d errors=%d", saved_total, errors)
-    return {"status": "ok", "saved": saved_total, "errors": errors}
+    logger.info("backfill_history: done — saved=%d errors=%d skipped_empty=%d", saved_total, errors, skipped_empty)
+    return {"status": "ok", "saved": saved_total, "errors": errors, "skipped_empty": skipped_empty}
 
 
 def _save_history_rows(cid: str, new_rows: list[dict]) -> int:

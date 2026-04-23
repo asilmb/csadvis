@@ -114,6 +114,17 @@ def _get_system_health():
     except Exception as _e:
         logger.debug("health: last-ping unavailable: %s", _e)
 
+    task_history = []
+    try:
+        r = _req.get(
+            f"http://{_s.api_internal_host}:{_s.api_port}/api/v1/system/task-history",
+            timeout=3,
+        )
+        if r.ok:
+            task_history = r.json()
+    except Exception as _e:
+        logger.debug("health: task-history unavailable: %s", _e)
+
     from datetime import UTC, datetime
 
     class _Health:
@@ -128,12 +139,57 @@ def _get_system_health():
     _Health.cooldown_until = cooldown_until
     _Health.scrape_sessions = scrape_sessions
     _Health.last_ping = last_ping
+    _Health.task_history = task_history
 
     return _Health()
 
 
 def register_callbacks(app: Any) -> None:
     """Register all Dash callbacks on the given app instance."""
+
+    # ── Global worker status bar — visible on all tabs ───────────────────────
+    @app.callback(
+        Output("global-worker-status", "children"),
+        Input("task-poll-interval", "n_intervals"),
+        prevent_initial_call=False,
+    )
+    def update_global_worker_status(_n: Any) -> Any:
+        import requests as _req
+        try:
+            r = _req.get(
+                f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/system/queue-status",
+                timeout=2,
+            )
+            state = r.json() if r.ok else {}
+        except Exception:
+            return None
+        if not state.get("busy"):
+            queue = state.get("queue_items", [])
+            if not queue:
+                return None
+            return html.Div(
+                f"В очереди: {', '.join(queue)}",
+                style={"fontSize": "11px", "color": _MUTED, "padding": "4px 0"},
+            )
+        job = state.get("current_type", "")
+        cur = state.get("progress_current", 0)
+        tot = state.get("progress_total", 0)
+        eta = state.get("eta_seconds")
+        name = state.get("last_item_name", "")
+        parts = [f"⟳ {job}"]
+        if tot:
+            parts.append(f"{cur}/{tot}")
+        if eta:
+            parts.append(f"~{eta // 60}m {eta % 60}s")
+        if name:
+            parts.append(name)
+        queue = state.get("queue_items", [])
+        if queue:
+            parts.append(f"| далее: {', '.join(queue)}")
+        return html.Div(
+            "  ".join(parts),
+            style={"fontSize": "11px", "color": _YELLOW, "padding": "4px 0", "fontFamily": "monospace"},
+        )
 
     # ── Task-completion poller: reads Redis key, updates store on change ──────
     @app.callback(
@@ -450,6 +506,13 @@ def register_callbacks(app: Any) -> None:
     def toggle_inventory_controls(tab: Any) -> Any:
         base = {"marginTop": "24px", "marginBottom": "12px"}
         return {**base, "display": "block" if tab == "inventory" else "none"}
+
+    @app.callback(
+        Output("system-controls-panel", "style"),
+        Input("main-tabs", "value"),
+    )
+    def toggle_system_controls(tab: Any) -> Any:
+        return {"display": "block" if tab == "system" else "none"}
 
     @app.callback(
         Output("price-count-store", "data"),

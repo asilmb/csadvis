@@ -28,7 +28,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
-from dataclasses import dataclass
+from collections import deque
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from infra.steam_credentials import auth_credentials_exist
@@ -41,6 +42,7 @@ logger = logging.getLogger(__name__)
 
 _work_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=10)
 _queue_shadow: list[str] = []  # mirrors queue job types for status display (no private API access)
+_task_history: deque[dict] = deque(maxlen=30)
 
 # Max time (seconds) to stay in PAUSED_AUTH before giving up the current job.
 _AUTH_WAIT_TIMEOUT_S = 1800  # 30 min
@@ -81,6 +83,9 @@ class _WorkerState:
     last_item_name: str = ""
     last_item_price: float = 0.0
     last_item_volume: int = 0
+    cancel_requested: bool = False
+    last_job_detail: str = ""
+    _current_task: asyncio.Task | None = field(default=None, repr=False, compare=False)
 
 
 _state = _WorkerState()
@@ -101,6 +106,17 @@ def enqueue(job: dict) -> None:
     """Put a job on the queue and register it in the shadow list for status display."""
     _work_queue.put_nowait(job)
     _queue_shadow.append(job.get("type", "?"))
+
+
+def get_task_history() -> list[dict]:
+    return list(_task_history)
+
+
+def request_cancel() -> None:
+    """Cancel the currently-running job immediately via task cancellation."""
+    _state.cancel_requested = True
+    if _state._current_task and not _state._current_task.done():
+        _state._current_task.cancel()
 
 
 def _calc_eta() -> int | None:
@@ -187,6 +203,22 @@ async def _wait_for_auth() -> bool:
 def _is_auth_error(exc: Exception) -> bool:
     msg = str(exc).lower()
     return any(kw in msg for kw in ("403", "forbidden", "unauthorized", "no_cookie", "invalid session", "no steam credentials"))
+
+
+def _run_cache_refresh(label: str) -> None:
+    """Recompute investment signals + portfolio advice after a data-changing job."""
+    from infra.cache_writer import refresh_cache
+    from src.domain.connection import SessionLocal as _SL
+    _db = _SL()
+    try:
+        refresh_cache(_db)
+        _db.commit()
+        logger.info("%s: cache refreshed", label)
+    except Exception as exc:
+        _db.rollback()
+        logger.warning("%s: cache refresh failed — %s", label, exc)
+    finally:
+        _db.close()
 
 
 # ── Job handlers ──────────────────────────────────────────────────────────────
@@ -352,6 +384,10 @@ async def _handle_price_poll(job: dict) -> None:
             _state.progress_current += 1
             items_this_session += 1
 
+            if _state.cancel_requested:
+                logger.info("price_poll: cancelled by request")
+                break
+
             if _is_emergency_blocked():
                 logger.warning(
                     "price_poll: stopping — Steam 429 block active, session preserved for resume"
@@ -384,6 +420,7 @@ async def _handle_price_poll(job: dict) -> None:
     if session_id is not None:
         await _asyncio.to_thread(finish_session, session_id)
     logger.info("price_poll: done")
+    await _asyncio.to_thread(_run_cache_refresh, "price_poll")
 
 
 async def _handle_sync_inventory(job: dict) -> None:
@@ -404,8 +441,34 @@ async def _handle_backfill_history(job: dict) -> None:
     except ScrapeBlocked as _blocked:
         logger.warning("backfill_history: skipped — Steam cooldown active until %s", _blocked.cooldown_until)
         return
+
+    def _on_progress(cur: int, tot: int, name: str) -> None:
+        if cur == 0:
+            _state.progress_current = 0
+            _state.progress_total = tot
+            _state.progress_started_at = datetime.now(UTC).replace(tzinfo=None)
+        else:
+            _state.progress_current = cur
+            _state.last_item_name = name
+
     from scrapper.runner import run_backfill_history
-    await run_backfill_history(names=job.get("names"), session_id=job.get("session_id"))
+    try:
+        result = await run_backfill_history(
+            names=job.get("names"),
+            session_id=job.get("session_id"),
+            on_progress=_on_progress,
+            should_stop=lambda: _state.cancel_requested,
+        )
+        se = result.get('skipped_empty', 0)
+        detail = f"saved={result.get('saved', 0)} errors={result.get('errors', 0)}"
+        if se:
+            detail += f" empty={se}"
+        _state.last_job_detail = detail
+    finally:
+        _state.progress_current = 0
+        _state.progress_total = 0
+        _state.progress_started_at = None
+    await asyncio.to_thread(_run_cache_refresh, "backfill_history")
 
 
 _HANDLERS: dict[str, object] = {
@@ -441,17 +504,35 @@ async def _worker_loop() -> None:
         if _queue_shadow and _queue_shadow[0] == job_type:
             _queue_shadow.pop(0)
         _state.busy = True
+        _state.cancel_requested = False
+        _state.last_job_detail = ""
         _state.current_type = job_type
-        _state.last_job_at = datetime.now(UTC).replace(tzinfo=None)
+        started_at = datetime.now(UTC).replace(tzinfo=None)
+        _state.last_job_at = started_at
+        job_task = asyncio.create_task(_process_job(job))
+        _state._current_task = job_task
+        _job_status = "ok"
         try:
             logger.info("work_queue: starting job type=%r", job_type)
-            await _process_job(job)
+            await job_task
             logger.info("work_queue: finished job type=%r", job_type)
             _state.last_error = ""
         except asyncio.CancelledError:
-            raise
+            if not job_task.done():
+                job_task.cancel()
+                try:
+                    await job_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            if _state.cancel_requested:
+                logger.info("work_queue: job type=%r cancelled by request", job_type)
+                _state.last_error = "cancelled"
+                _job_status = "cancelled"
+            else:
+                raise  # worker itself is shutting down
         except Exception as exc:
             _state.last_error = f"{type(exc).__name__}: {exc}"
+            _job_status = "error"
             logger.error(
                 "work_queue: job type=%r failed — %s",
                 job_type,
@@ -459,6 +540,22 @@ async def _worker_loop() -> None:
                 exc_info=True,
             )
         finally:
+            finished_at = datetime.now(UTC).replace(tzinfo=None)
+            _task_history.appendleft({
+                "type": job_type,
+                "status": _job_status,
+                "started_at": started_at.isoformat(),
+                "finished_at": finished_at.isoformat(),
+                "duration_s": int((finished_at - started_at).total_seconds()),
+                "error": _state.last_error if _job_status != "ok" else None,
+                "detail": _state.last_job_detail or None,
+            })
+            try:
+                from infra.redis_client import get_redis as _get_redis
+                _get_redis().set("cs2:ui:last_task_done", finished_at.isoformat())
+            except Exception:
+                pass
+            _state._current_task = None
             _state.busy = False
             _state.current_type = ""
             _work_queue.task_done()
