@@ -310,14 +310,26 @@ async def run_backfill_history(
                         set_worker_phase("saving", name)
                     except Exception:
                         pass
-                    saved = await asyncio.to_thread(_save_history_rows, cid, new_rows)
+                    saved = await asyncio.wait_for(
+                        asyncio.to_thread(_save_history_rows, cid, new_rows),
+                        timeout=60,
+                    )
                     saved_total += saved
                     max_dates[name] = max(r["date"].date() for r in new_rows)
+                except asyncio.TimeoutError:
+                    logger.error("backfill_history: DB write timed out for %s — skipping", name)
+                    errors += 1
                 except Exception as exc:
                     logger.error("backfill_history: DB write error for %s — %s", name, exc)
                     errors += 1
 
-                await asyncio.to_thread(tick_session, session_id)
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(tick_session, session_id),
+                        timeout=15,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("backfill_history: tick_session timed out — continuing")
 
                 # Noise page — visit listing page we just fetched (looks like real browsing)
                 noise_counter += 1

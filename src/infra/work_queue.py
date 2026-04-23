@@ -304,7 +304,7 @@ async def _handle_price_poll(job: dict) -> None:
 
     # Create snapshot only for bulk jobs (not single-container refresh)
     if not single_cid and session_id is None:
-        session_id = await _asyncio.to_thread(create_session, "price_poll", [n[0] for n in names])
+        session_id = await _asyncio.wait_for(_asyncio.to_thread(create_session, "price_poll", [n[0] for n in names]), timeout=15)
 
     logger.info("price_poll: polling %d containers", len(names))
     _state.progress_current = 0
@@ -343,7 +343,7 @@ async def _handle_price_poll(job: dict) -> None:
             except InvalidHashNameError:
                 _state.progress_current += 1
                 if session_id is not None:
-                    await _asyncio.to_thread(tick_session, session_id)
+                    await _asyncio.wait_for(_asyncio.to_thread(tick_session, session_id), timeout=15)
                 continue
 
             retry = True
@@ -383,7 +383,7 @@ async def _handle_price_poll(job: dict) -> None:
                             continue
                         svc = ItemService.open()
                         try:
-                            await _asyncio.to_thread(svc.process_new_price, cid, price, volume)
+                            await _asyncio.wait_for(_asyncio.to_thread(svc.process_new_price, cid, price, volume), timeout=30)
                         finally:
                             svc.close()
                     _state.last_item_name = name
@@ -415,7 +415,7 @@ async def _handle_price_poll(job: dict) -> None:
                 _rate_limited = True
                 break
             if session_id is not None:
-                await _asyncio.to_thread(tick_session, session_id)
+                await _asyncio.wait_for(_asyncio.to_thread(tick_session, session_id), timeout=15)
 
             # Noise page — every 5–12 items visit a listing page (real browsing signal)
             noise_counter += 1
@@ -439,9 +439,9 @@ async def _handle_price_poll(job: dict) -> None:
         logger.warning("price_poll: aborted due to Steam 429 — %d items unprocessed", _remaining)
         return
     if session_id is not None:
-        await _asyncio.to_thread(finish_session, session_id)
+        await _asyncio.wait_for(_asyncio.to_thread(finish_session, session_id), timeout=15)
     logger.info("price_poll: done")
-    await _asyncio.to_thread(_run_cache_refresh, "price_poll")
+    await _asyncio.wait_for(_asyncio.to_thread(_run_cache_refresh, "price_poll"), timeout=120)
 
 
 async def _handle_sync_inventory(job: dict) -> None:
@@ -489,7 +489,7 @@ async def _handle_backfill_history(job: dict) -> None:
         _state.progress_current = 0
         _state.progress_total = 0
         _state.progress_started_at = None
-    await asyncio.to_thread(_run_cache_refresh, "backfill_history")
+    await asyncio.wait_for(asyncio.to_thread(_run_cache_refresh, "backfill_history"), timeout=120)
 
 
 _HANDLERS: dict[str, object] = {
