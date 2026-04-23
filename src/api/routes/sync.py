@@ -76,9 +76,21 @@ def sync_wallet_endpoint() -> SyncWalletResponse:
 
 # ── Inventory sync ────────────────────────────────────────────────────────────
 
+def _get_steam_id() -> str:
+    """Return STEAM_ID from Redis (set via UI form) or fall back to env/settings."""
+    try:
+        from infra.redis_client import get_redis as _get_redis
+        val = _get_redis().get("cs2:config:steam_id")
+        if val:
+            return val.strip()
+    except Exception:
+        pass
+    return (settings.steam_id or "").strip()
+
+
 @router.post("/inventory", response_model=SyncDispatchResponse)
 def sync_inventory_endpoint() -> SyncDispatchResponse:
-    steam_id = (settings.steam_id or "").strip()
+    steam_id = _get_steam_id()
     if not steam_id:
         return SyncDispatchResponse(ok=False, already_running=False, message="No STEAM_ID configured.")
     return _enqueue({"type": "sync_inventory", "steam_id": steam_id}, "sync_inventory")

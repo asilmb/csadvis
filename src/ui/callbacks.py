@@ -151,8 +151,29 @@ def _get_system_health():
 
     from datetime import UTC, datetime
 
+    # Determine actual auth status: check Redis expired key first (fast),
+    # fall back to the raw cookie presence.
+    _cookie_val = get_login_secure()
+    _cookie_expired_flag = False
+    try:
+        import os as _os
+        import redis as _redis_lib2
+        _r2 = _redis_lib2.from_url(_os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0"),
+                                    socket_connect_timeout=1, decode_responses=True)
+        _cookie_expired_flag = bool(_r2.exists("cs2:system:cookie_expired"))
+    except Exception:
+        pass
+
+    if not _cookie_val:
+        _cookie_status = "NOT_SET"
+    elif _cookie_expired_flag:
+        _cookie_status = "EXPIRED"
+    else:
+        _cookie_status = "VALID"
+
     class _Health:
-        cookie_set = bool(get_login_secure())
+        cookie_set = bool(_cookie_val)
+        cookie_status = _cookie_status
         tokens = None
         token_level = "N/A"
         circuit_open = False
@@ -174,6 +195,7 @@ def register_callbacks(app: Any) -> None:
     # ── Global worker status bar — visible on all tabs ───────────────────────
     @app.callback(
         Output("global-worker-status", "children"),
+        Output("worker-progress-interval", "disabled", allow_duplicate=True),
         Input("task-poll-interval", "n_intervals"),
         prevent_initial_call=False,
     )
@@ -186,15 +208,15 @@ def register_callbacks(app: Any) -> None:
             )
             state = r.json() if r.ok else {}
         except Exception:
-            return None
+            return None, no_update
         if not state.get("busy"):
             queue = state.get("queue_items", [])
             if not queue:
-                return None
+                return None, no_update
             return html.Div(
                 f"В очереди: {', '.join(queue)}",
                 style={"fontSize": "11px", "color": _MUTED, "padding": "4px 0"},
-            )
+            ), no_update
         job = state.get("current_type", "")
         cur = state.get("progress_current", 0)
         tot = state.get("progress_total", 0)
@@ -213,7 +235,7 @@ def register_callbacks(app: Any) -> None:
         return html.Div(
             "  ".join(parts),
             style={"fontSize": "11px", "color": _YELLOW, "padding": "4px 0", "fontFamily": "monospace"},
-        )
+        ), False  # re-enable progress interval when worker is busy
 
     # ── Task-completion poller: reads Redis key, updates store on change ──────
     @app.callback(
@@ -598,6 +620,10 @@ def register_callbacks(app: Any) -> None:
                 toast_hdr = "Нет Steam cookie"
                 toast_msg = "Запусти в терминале: cs2 cookie"
             else:
+                # Cookie exists but Steam rejected it — mark session as expired so
+                # the cookie modal opens automatically on the next poll interval.
+                from scrapper.steam_sync import invalidate_steam_session as _invalidate
+                _invalidate(msg)
                 hint = f"{msg} — обнови: cs2 cookie"
                 toast_hdr = "Cookie устарел"
                 toast_msg = hint
@@ -633,6 +659,13 @@ def register_callbacks(app: Any) -> None:
 
         is_btn = callback_context.triggered_id == "inventory-load-btn"
         steam_id = _settings.steam_id.strip()
+        if not steam_id:
+            try:
+                from infra.redis_client import get_redis as _get_redis
+                _rs = _get_redis().get('cs2:config:steam_id')
+                steam_id = (_rs or '').strip()
+            except Exception:
+                pass
         if not steam_id:
             status = html.Span(
                 "Добавь STEAM_ID= в .env", style={"color": _MUTED, "fontSize": "12px"}
@@ -1116,7 +1149,15 @@ def register_callbacks(app: Any) -> None:
 
         try:
             wallet = _sync_wal()
-            inventory = _sync_inv(_settings.steam_id)
+            _eff_steam_id = _settings.steam_id.strip()
+            if not _eff_steam_id:
+                try:
+                    from infra.redis_client import get_redis as _get_redis_sid
+                    _rs2 = _get_redis_sid().get('cs2:config:steam_id')
+                    _eff_steam_id = (_rs2 or '').strip()
+                except Exception:
+                    pass
+            inventory = _sync_inv(_eff_steam_id)
             transactions = _sync_tx()
 
             # Persist transactions to DB (same logic as load_steam_history)
@@ -1739,6 +1780,34 @@ def register_callbacks(app: Any) -> None:
             for entry in store
         ]
 
+    @app.callback(
+        Output("cookie-modal", "is_open", allow_duplicate=True),
+        Input("btn-open-cookie-modal", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def force_open_cookie_modal(n: Any) -> Any:
+        if not n:
+            raise dash.exceptions.PreventUpdate
+        return True
+
+    @app.callback(
+        Output("steam-id-input", "value"),
+        Input("cookie-modal", "is_open"),
+        prevent_initial_call=True,
+    )
+    def prefill_steam_id(is_open: Any) -> Any:
+        if not is_open:
+            raise dash.exceptions.PreventUpdate
+        # Show saved value so user knows what's currently configured
+        try:
+            from infra.redis_client import get_redis as _get_redis
+            val = _get_redis().get("cs2:config:steam_id")
+            if val:
+                return val.strip()
+        except Exception:
+            pass
+        return _settings.steam_id or ""
+
     _register_auth_modal_callbacks(app)
     _register_cookie_callbacks(app)
 
@@ -1863,10 +1932,11 @@ def _register_cookie_callbacks(app: dash.Dash) -> None:
         State("cookie-input", "value"),
         State("sessionid-input", "value"),
         State("session-note-input", "value"),
+        State("steam-id-input", "value"),
         prevent_initial_call=True,
     )
-    def submit_new_cookie(n_clicks, cookie_value, sessionid_value, session_note):
-        """POST new cookie + sessionid + session note to API; close modal on success."""
+    def submit_new_cookie(n_clicks, cookie_value, sessionid_value, session_note, steam_id_value):
+        """POST new cookie + sessionid + session note + steam_id to API; close modal on success."""
         if not n_clicks or not cookie_value:
             raise dash.exceptions.PreventUpdate
         try:
@@ -1877,6 +1947,7 @@ def _register_cookie_callbacks(app: dash.Dash) -> None:
                     "value": cookie_value,
                     "sessionid": sessionid_value or "",
                     "session_note": session_note or "",
+                    "steam_id": steam_id_value or "",
                 },
                 timeout=15,
             )

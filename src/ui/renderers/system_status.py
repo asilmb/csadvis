@@ -238,8 +238,9 @@ def render_system_status(health=None) -> html.Div:
         )
 
     # ── Liveness block ────────────────────────────────────────────────────────
-    cookie_color = _GREEN if health.cookie_set else _RED
-    cookie_text = "Valid" if health.cookie_set else "Not set"
+    _cs = getattr(health, "cookie_status", "VALID" if health.cookie_set else "NOT_SET")
+    cookie_color = _GREEN if _cs == "VALID" else (_RED if _cs in ("EXPIRED", "NOT_SET") else _ORANGE)
+    cookie_text = {"VALID": "Valid", "EXPIRED": "Expired", "NOT_SET": "Not set"}.get(_cs, _cs)
 
     worker = getattr(health, "worker", {})
     if worker.get("busy"):
@@ -323,6 +324,7 @@ def render_system_status(health=None) -> html.Div:
                 _group_label("Диагностика"),
                 _btn_group(
                     dbc.Button("Ping Steam", id="btn-ping-steam", color="secondary", outline=True, size="sm", n_clicks=0),
+                    dbc.Button("Обновить Cookie", id="btn-open-cookie-modal", color="warning", outline=True, size="sm", n_clicks=0),
                 ),
                 html.Div(id="ping-steam-last", children=_ping_label(last_ping), style={"marginTop": "4px"}),
             ]), width="auto"),
@@ -335,6 +337,7 @@ def render_system_status(health=None) -> html.Div:
         dbc.Tooltip("Загружает историю цен для всех контейнеров (~60–110 мин)", target="btn-backfill-all", placement="bottom"),
         dbc.Tooltip("Очищает очередь задач воркера", target="btn-clear-queue", placement="bottom"),
         dbc.Tooltip("Проверяет токен и наличие блокировки Steam", target="btn-ping-steam", placement="bottom"),
+        dbc.Tooltip("Открыть форму ввода Steam cookie вручную", target="btn-open-cookie-modal", placement="bottom"),
     ])
 
     # ── Blacklisted containers ─────────────────────────────────────────────────

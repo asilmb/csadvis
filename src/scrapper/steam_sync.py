@@ -27,6 +27,33 @@ class SteamAuthError(Exception):
     """Raised when Steam API rejects requests due to an expired or missing cookie."""
 
 
+
+def invalidate_steam_session(reason: str) -> None:
+    """
+    Mark the Steam session as expired in DB and signal all workers via Redis.
+
+    DB status -> 'EXPIRED'.
+    Redis key cs2:system:cookie_expired=1 (TTL 120 s) -- UI polls this key to
+    show the re-auth banner without hitting the database on every render.
+
+    Redis failure is non-fatal: DB write always happens first so persistent
+    state stays correct even if the cache is temporarily unavailable.
+    """
+    logger.warning("Steam session invalidated: %s", reason)
+    try:
+        from src.domain.connection import SessionLocal
+        from src.domain.sql_repositories import set_cookie_status
+        with SessionLocal() as _db:
+            set_cookie_status(_db, "EXPIRED")
+            _db.commit()
+    except Exception as exc_db:
+        logger.error("invalidate_steam_session: DB update failed: %s", exc_db)
+    try:
+        from infra.redis_client import get_redis as _get_redis
+        _get_redis().set("cs2:system:cookie_expired", "1", ex=120)
+    except Exception as exc_redis:
+        logger.error("invalidate_steam_session: Redis write failed: %s", exc_redis)
+
 # в”Ђв”Ђв”Ђ Result types в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 
@@ -88,14 +115,7 @@ def sync_wallet() -> WalletResult:
         balance, msg = fetch_wallet_balance()
     except AuthError as exc:
         cached = get_saved_balance()
-        try:
-            from src.domain.connection import SessionLocal
-            from src.domain.sql_repositories import set_cookie_status
-            with SessionLocal() as _db:
-                set_cookie_status(_db, "EXPIRED")
-                _db.commit()
-        except Exception as exc_db:
-            logger.error("sync_wallet (AuthError): РћС€РёР±РєР° РѕР±РЅРѕРІР»РµРЅРёСЏ СЃС‚Р°С‚СѓСЃР° РІ Р‘Р”: %s", exc_db)
+        invalidate_steam_session(str(exc))
         return WalletResult(
             ok=False,
             balance=cached,
@@ -107,21 +127,9 @@ def sync_wallet() -> WalletResult:
         cached = get_saved_balance()
         if msg == "NO_COOKIE":
             error_code = "NO_COOKIE"
-        elif "403" in msg or "СѓСЃС‚Р°СЂРµР»" in msg.lower():
+        elif "403" in msg or "устарел" in msg.lower():
             error_code = "STALE_COOKIE"
-            try:
-                from src.domain.connection import SessionLocal
-                from src.domain.sql_repositories import set_cookie_status
-                with SessionLocal() as _db:
-                    set_cookie_status(_db, "EXPIRED")
-                    _db.commit()
-            except Exception as exc_db:
-                logger.error("sync_wallet: РћС€РёР±РєР° РѕР±РЅРѕРІР»РµРЅРёСЏ СЃС‚Р°С‚СѓСЃР° РІ Р‘Р”: %s", exc_db)
-            try:
-                from infra.redis_client import get_redis as _get_redis
-                _get_redis().set("cs2:system:cookie_expired", "1", ex=120)
-            except Exception as exc_redis:
-                logger.error("sync_wallet: РћС€РёР±РєР° Р·Р°РїРёСЃРё РІ Redis: %s", exc_redis)
+            invalidate_steam_session(msg)
         else:
             error_code = "NETWORK"
         logger.warning("sync_wallet failed: %s (cached=%.0f)", msg, cached or 0)
@@ -203,19 +211,7 @@ def sync_transactions(max_pages: int = 10) -> TransactionsResult:
             error_code = "NO_COOKIE"
         else:
             error_code = "STALE_COOKIE"
-            try:
-                from src.domain.connection import SessionLocal
-                from src.domain.sql_repositories import set_cookie_status
-                with SessionLocal() as _db:
-                    set_cookie_status(_db, "EXPIRED")
-                    _db.commit()
-            except Exception as exc_db:
-                logger.error("sync_transactions: РћС€РёР±РєР° РѕР±РЅРѕРІР»РµРЅРёСЏ СЃС‚Р°С‚СѓСЃР° РІ Р‘Р”: %s", exc_db)
-            try:
-                from infra.redis_client import get_redis as _get_redis
-                _get_redis().set("cs2:system:cookie_expired", "1", ex=120)
-            except Exception as exc_redis:
-                logger.error("sync_transactions: РћС€РёР±РєР° Р·Р°РїРёСЃРё РІ Redis: %s", exc_redis)
+            invalidate_steam_session(msg)
 
         return TransactionsResult(ok=False, message=msg, error_code=error_code)
 

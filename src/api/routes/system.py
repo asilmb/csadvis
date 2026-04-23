@@ -21,6 +21,7 @@ class UpdateCookieRequest(BaseModel):
     value: str
     session_note: str = ""
     sessionid: str = ""
+    steam_id: str = ""
 
 
 class CancelTaskRequest(BaseModel):
@@ -181,6 +182,12 @@ def update_cookie_endpoint(req: UpdateCookieRequest) -> dict:
     set_login_secure(value)
     if req.sessionid.strip():
         set_session_id(req.sessionid.strip())
+    if req.steam_id.strip():
+        try:
+            from infra.redis_client import get_redis as _get_redis
+            _get_redis().set("cs2:config:steam_id", req.steam_id.strip())
+        except Exception as exc:
+            logger.warning("Could not save steam_id to Redis: %s", exc)
 
     from scrapper.steam_sync import sync_wallet
     result = sync_wallet()

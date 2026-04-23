@@ -238,6 +238,11 @@ async def run_backfill_history(
                 if items_this_session > 0 and items_this_session >= session_break_at:
                     logger.debug("[Stealth] backfill session break at %d items", items_this_session)
                     await client.__aexit__(None, None, None)
+                    try:
+                        from infra.work_queue import set_worker_phase
+                        set_worker_phase("session_break", name)
+                    except Exception:
+                        pass
                     await asyncio.sleep(_random.uniform(25.0, 70.0))
                     client = SteamMarketClient()
                     await client.__aenter__()
@@ -279,6 +284,11 @@ async def run_backfill_history(
                         break
                     logger.debug("backfill_history: empty rows for %s (cookie may be expired or item delisted)", name)
                     skipped_empty += 1
+                    try:
+                        from infra.work_queue import set_worker_phase
+                        set_worker_phase("delay", name)
+                    except Exception:
+                        pass
                     await asyncio.sleep(human_delay())
                     continue
 
@@ -286,6 +296,11 @@ async def run_backfill_history(
                 new_rows = [r for r in rows if r["date"].date() > existing_max]
 
                 if not new_rows:
+                    try:
+                        from infra.work_queue import set_worker_phase
+                        set_worker_phase("delay", name)
+                    except Exception:
+                        pass
                     await asyncio.sleep(human_delay())
                     continue
 

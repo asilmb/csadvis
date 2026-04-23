@@ -483,6 +483,17 @@ def create_dash_app() -> dash.Dash:
                             placeholder="Напр.: Chrome, Windows, апрель 2026",
                             debounce=False,
                         ),
+                        dbc.Label("Steam ID (76561198...)", html_for="steam-id-input", className="mt-3"),
+                        dbc.Input(
+                            id="steam-id-input",
+                            type="text",
+                            placeholder="76561198XXXXXXXXX",
+                            debounce=False,
+                        ),
+                        html.Small(
+                            "Нужен для загрузки инвентаря. Находится в URL профиля Steam.",
+                            className="text-muted",
+                        ),
                         html.Div(id="cookie-update-status", className="mt-2 text-danger"),
                     ]),
                     dbc.ModalFooter([
