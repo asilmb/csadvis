@@ -252,7 +252,17 @@ async def run_backfill_history(
                     continue
 
                 try:
+                    try:
+                        from infra.work_queue import set_worker_phase
+                        set_worker_phase("requesting", name)
+                    except Exception:
+                        pass
                     rows: list[dict] = await client.fetch_history(api_name)
+                    try:
+                        from infra.work_queue import set_worker_phase
+                        set_worker_phase("received", name)
+                    except Exception:
+                        pass
                 except Exception as exc:
                     logger.error("backfill_history: fetch error for %s — %s", name, exc)
                     errors += 1
@@ -280,6 +290,11 @@ async def run_backfill_history(
                     continue
 
                 try:
+                    try:
+                        from infra.work_queue import set_worker_phase
+                        set_worker_phase("saving", name)
+                    except Exception:
+                        pass
                     saved = await asyncio.to_thread(_save_history_rows, cid, new_rows)
                     saved_total += saved
                     max_dates[name] = max(r["date"].date() for r in new_rows)
@@ -298,6 +313,11 @@ async def run_backfill_history(
                     noise_trigger = _random.randint(5, 12)
 
                 # Human-like inter-request delay
+                try:
+                    from infra.work_queue import set_worker_phase
+                    set_worker_phase("delay", name)
+                except Exception:
+                    pass
                 await asyncio.sleep(human_delay())
             finally:
                 if on_progress:

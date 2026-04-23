@@ -64,45 +64,123 @@ def _badge(text: str, color: str) -> html.Span:
     )
 
 
+_PHASE_META: dict[str, tuple[str, str, int]] = {
+    # phase → (label, color, warn_after_seconds)
+    "requesting":     ("⟳ Запрос Steam",      _ORANGE, 40),
+    "received":       ("✓ Ответ получен",      _GREEN,  10),
+    "delay":          ("⏳ Ожидание",           _MUTED,  60),
+    "session_break":  ("☕ Перерыв сессии",     _MUTED,  90),
+    "saving":         ("💾 Запись в БД",        _GREEN,  15),
+}
+
+
 def _render_progress(worker: dict) -> list:
-    """Inline progress indicator — spinner + label + queue list when busy."""
+    """Rich phase-aware progress block — shows phase, staleness, progress bar, queue."""
     if not worker.get("busy") and worker.get("queue_size", 0) == 0:
         return []
+
     job_type = worker.get("current_type") or "ожидание..."
     prog_cur = worker.get("progress_current", 0)
     prog_tot = worker.get("progress_total", 0)
     eta_s = worker.get("eta_seconds")
-    if prog_tot > 0:
-        if eta_s and eta_s > 0:
-            if eta_s >= 3600:
-                eta_str = f"{eta_s // 3600}ч {(eta_s % 3600) // 60}мин"
-            elif eta_s >= 60:
-                eta_str = f"~{eta_s // 60} мин"
-            else:
-                eta_str = f"~{eta_s} сек"
-            job_label = f"{job_type}  {prog_cur} / {prog_tot}  ({eta_str})"
-        else:
-            job_label = f"{job_type}  {prog_cur} / {prog_tot}"
-    else:
-        job_label = job_type
+    phase = worker.get("phase", "")
+    secs = worker.get("seconds_in_phase", 0)
+    current_item = worker.get("current_item_name", "")
     last_name = worker.get("last_item_name", "")
     last_price = worker.get("last_item_price", 0.0)
     last_volume = worker.get("last_item_volume", 0)
     queue_items = worker.get("queue_items", [])
 
-    queue_rows = []
-    if queue_items:
-        queue_rows = [
-            html.Div(
-                [
-                    html.Span(f"{i + 1}.", style={"color": _MUTED, "fontSize": "11px", "width": "18px", "flexShrink": "0"}),
-                    html.Span(jt, style={"color": _TEXT, "fontSize": "11px"}),
-                ],
-                style={"display": "flex", "gap": "4px"},
+    # ── Phase badge ───────────────────────────────────────────────────────────
+    phase_label, phase_color, warn_after = _PHASE_META.get(phase, ("● Работает", _MUTED, 120))
+    if secs >= warn_after and warn_after > 0:
+        phase_color = _RED
+        phase_label += " ⚠"
+    phase_badge = html.Span(
+        [
+            html.Span(phase_label, style={"fontWeight": "600"}),
+            html.Span(f" {secs}с", style={"opacity": "0.7", "fontSize": "10px"}),
+        ],
+        style={
+            "backgroundColor": f"{phase_color}22",
+            "border": f"1px solid {phase_color}",
+            "borderRadius": "4px",
+            "color": phase_color,
+            "fontSize": "11px",
+            "padding": "1px 8px",
+            "display": "inline-block",
+        },
+    )
+
+    # ── ETA string ────────────────────────────────────────────────────────────
+    if eta_s and eta_s > 0:
+        if eta_s >= 3600:
+            eta_str = f"{eta_s // 3600}ч {(eta_s % 3600) // 60}мин"
+        elif eta_s >= 60:
+            eta_str = f"~{eta_s // 60} мин"
+        else:
+            eta_str = f"~{eta_s} сек"
+    else:
+        eta_str = ""
+
+    # ── Header row ────────────────────────────────────────────────────────────
+    header_parts: list = [
+        dbc.Spinner(size="sm", color="primary", spinner_style={"marginRight": "8px", "flexShrink": "0"}),
+        html.Span(job_type, style={"color": _TEXT, "fontSize": "12px", "fontWeight": "600", "marginRight": "8px"}),
+        phase_badge,
+    ]
+    if prog_tot > 0:
+        header_parts.append(
+            html.Span(
+                f"{prog_cur} / {prog_tot}",
+                style={"color": _MUTED, "fontSize": "11px", "marginLeft": "10px"},
             )
-            for i, jt in enumerate(queue_items)
+        )
+    if eta_str:
+        header_parts.append(
+            html.Span(eta_str, style={"color": _GOLD, "fontSize": "11px", "marginLeft": "6px"})
+        )
+
+    # ── Progress bar ──────────────────────────────────────────────────────────
+    progress_bar = []
+    if prog_tot > 0:
+        pct = min(100, int(prog_cur / prog_tot * 100))
+        progress_bar = [
+            html.Div(
+                html.Div(
+                    style={
+                        "width": f"{pct}%",
+                        "height": "100%",
+                        "backgroundColor": _ORANGE,
+                        "borderRadius": "2px",
+                        "transition": "width 0.4s ease",
+                    }
+                ),
+                style={
+                    "width": "100%",
+                    "height": "4px",
+                    "backgroundColor": f"{_BORDER}",
+                    "borderRadius": "2px",
+                    "marginTop": "6px",
+                },
+            )
         ]
 
+    # ── Current item (being fetched right now) ────────────────────────────────
+    current_row = []
+    if current_item:
+        current_row = [html.Div(
+            [
+                html.Span("Сейчас: ", style={"color": _MUTED, "fontSize": "11px"}),
+                html.Span(
+                    current_item,
+                    style={"color": _TEXT, "fontSize": "11px", "fontStyle": "italic"},
+                ),
+            ],
+            style={"marginTop": "5px"},
+        )]
+
+    # ── Last completed item ───────────────────────────────────────────────────
     last_row = []
     if last_name:
         last_row = [html.Div(
@@ -115,21 +193,32 @@ def _render_progress(worker: dict) -> list:
             style={"marginTop": "4px"},
         )]
 
+    # ── Queue ─────────────────────────────────────────────────────────────────
+    queue_section = []
+    if queue_items:
+        queue_rows = [
+            html.Div(
+                [
+                    html.Span(f"{i + 1}.", style={"color": _MUTED, "fontSize": "11px", "width": "18px", "flexShrink": "0"}),
+                    html.Span(jt, style={"color": _TEXT, "fontSize": "11px"}),
+                ],
+                style={"display": "flex", "gap": "4px"},
+            )
+            for i, jt in enumerate(queue_items)
+        ]
+        queue_section = [html.Div(
+            [html.Div("В очереди:", style={**_LABEL, "marginBottom": "4px"})] + queue_rows,
+            style={"borderTop": f"1px solid {_BORDER}", "paddingTop": "6px", "marginTop": "6px"},
+        )]
+
     return [
         html.Div(
             [
-                html.Div(
-                    [
-                        dbc.Spinner(size="sm", color="primary", spinner_style={"marginRight": "8px"}),
-                        html.Span(job_label, style={"color": _TEXT, "fontSize": "12px"}),
-                    ],
-                    style={"display": "flex", "alignItems": "center", "marginBottom": "4px"},
-                ),
+                html.Div(header_parts, style={"display": "flex", "alignItems": "center", "flexWrap": "wrap", "gap": "2px"}),
+                *progress_bar,
+                *current_row,
                 *last_row,
-                *([html.Div(
-                    [html.Div("В очереди:", style={**_LABEL, "marginBottom": "4px"})] + queue_rows,
-                    style={"borderTop": f"1px solid {_BORDER}", "paddingTop": "6px", "marginTop": "6px"},
-                )] if queue_rows else []),
+                *queue_section,
             ],
             style={
                 "padding": "10px 12px",

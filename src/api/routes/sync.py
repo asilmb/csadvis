@@ -14,6 +14,7 @@ import asyncio
 import logging
 
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 from config import settings
 from scrapper.steam_sync import sync_transactions, sync_wallet
@@ -22,6 +23,24 @@ from api.schemas import (
     SyncTransactionsResponse,
     SyncWalletResponse,
 )
+
+
+class TypeFilterRequest(BaseModel):
+    container_type: str = ""
+
+
+def _names_for_type(container_type: str) -> list[str] | None:
+    """Return container names matching container_type, or None for all."""
+    if not container_type:
+        return None
+    from src.domain.connection import SessionLocal
+    from src.domain.models import DimContainer
+    with SessionLocal() as db:
+        rows = db.query(DimContainer.container_name).filter(
+            DimContainer.is_blacklisted == 0,
+            DimContainer.container_type == container_type,
+        ).all()
+    return [r.container_name for r in rows]
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sync", tags=["sync"])
@@ -89,8 +108,21 @@ def sync_market_catalog_endpoint() -> SyncDispatchResponse:
 # ── Market price refresh ──────────────────────────────────────────────────────
 
 @router.post("/market/prices", response_model=SyncDispatchResponse)
-def sync_market_prices_endpoint() -> SyncDispatchResponse:
-    return _enqueue({"type": "price_poll"}, "price_poll")
+def sync_market_prices_endpoint(req: TypeFilterRequest = TypeFilterRequest()) -> SyncDispatchResponse:
+    names = _names_for_type(req.container_type)
+    if names is not None and not names:
+        return SyncDispatchResponse(ok=False, already_running=False, message=f"Нет контейнеров типа «{req.container_type}».")
+    job: dict = {"type": "price_poll"}
+    if names is not None:
+        from src.domain.connection import SessionLocal
+        from src.domain.models import DimContainer
+        with SessionLocal() as db:
+            ids = [str(c.container_id) for c in db.query(DimContainer).filter(DimContainer.container_name.in_(names)).all()]
+        job["container_ids"] = ids
+        label = f"price_poll/{req.container_type} ({len(ids)})"
+    else:
+        label = "price_poll"
+    return _enqueue(job, label)
 
 
 @router.post("/market/prices/missing-volume", response_model=SyncDispatchResponse)
@@ -117,11 +149,15 @@ def sync_prices_missing_volume_endpoint() -> SyncDispatchResponse:
     return _enqueue({"type": "price_poll", "container_ids": ids}, f"price_poll/missing-volume ({len(ids)})")
 
 
-# ── Backfill price history (all containers) ───────────────────────────────────
+# ── Backfill price history (all containers, optional type filter) ─────────────
 
 @router.post("/backfill", response_model=SyncDispatchResponse)
-def sync_backfill_endpoint() -> SyncDispatchResponse:
-    return _enqueue({"type": "backfill_history", "names": None}, "backfill_history")
+def sync_backfill_endpoint(req: TypeFilterRequest = TypeFilterRequest()) -> SyncDispatchResponse:
+    names = _names_for_type(req.container_type)
+    if names is not None and not names:
+        return SyncDispatchResponse(ok=False, already_running=False, message=f"Нет контейнеров типа «{req.container_type}».")
+    label = f"backfill_history/{req.container_type} ({len(names)})" if names else "backfill_history"
+    return _enqueue({"type": "backfill_history", "names": names}, label)
 
 
 # ── Backfill price history (blacklisted containers) ───────────────────────────

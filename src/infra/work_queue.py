@@ -85,6 +85,10 @@ class _WorkerState:
     last_item_volume: int = 0
     cancel_requested: bool = False
     last_job_detail: str = ""
+    # Phase tracking — what the worker is doing right now
+    phase: str = ""              # requesting | received | delay | session_break | saving | idle
+    phase_at: datetime | None = None
+    current_item_name: str = ""  # item being fetched right now (before completion)
     _current_task: asyncio.Task | None = field(default=None, repr=False, compare=False)
 
 
@@ -119,6 +123,14 @@ def request_cancel() -> None:
         _state._current_task.cancel()
 
 
+def set_worker_phase(phase: str, item: str = "") -> None:
+    """Update the worker phase for UI visibility. Called from job handlers."""
+    _state.phase = phase
+    _state.phase_at = datetime.now(UTC).replace(tzinfo=None)
+    if item:
+        _state.current_item_name = item
+
+
 def _calc_eta() -> int | None:
     cur = _state.progress_current
     tot = _state.progress_total
@@ -132,6 +144,8 @@ def _calc_eta() -> int | None:
 
 
 def get_worker_state() -> dict:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    seconds_in_phase = int((now - _state.phase_at).total_seconds()) if _state.phase_at else 0
     return {
         "busy": _state.busy,
         "auth_paused": _state.auth_paused,
@@ -147,6 +161,9 @@ def get_worker_state() -> dict:
         "last_item_name": _state.last_item_name,
         "last_item_price": _state.last_item_price,
         "last_item_volume": _state.last_item_volume,
+        "phase": _state.phase,
+        "seconds_in_phase": seconds_in_phase,
+        "current_item_name": _state.current_item_name,
     }
 
 
@@ -314,6 +331,7 @@ async def _handle_price_poll(job: dict) -> None:
             if items_this_session > 0 and items_this_session >= session_break_at:
                 logger.debug("[Stealth] price_poll session break at %d items", items_this_session)
                 await client.__aexit__(None, None, None)
+                set_worker_phase("session_break", name)
                 await _asyncio.sleep(random.uniform(25.0, 70.0))
                 client = SteamMarketClient()
                 await client.__aenter__()
@@ -332,7 +350,9 @@ async def _handle_price_poll(job: dict) -> None:
             while retry:
                 retry = False
                 try:
+                    set_worker_phase("requesting", name)
                     overview = await client.fetch_price_overview(api_name)
+                    set_worker_phase("received", name)
                     raw = overview.get("lowest_price") or overview.get("median_price")
                     if raw is None:
                         continue
@@ -406,6 +426,7 @@ async def _handle_price_poll(job: dict) -> None:
                 noise_trigger = random.randint(5, 12)
 
             # Human-like inter-request delay with heavy tail
+            set_worker_phase("delay", name)
             await _asyncio.sleep(human_delay())
     finally:
         await client.__aexit__(None, None, None)

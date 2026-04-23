@@ -1,5 +1,5 @@
-"""
-Services layer — Steam HTTP data sync.
+﻿"""
+Services layer вЂ” Steam HTTP data sync.
 
 Wraps the three Steam HTTP ingestion calls (wallet, inventory, transactions)
 behind clean synchronous service functions with typed result objects.
@@ -8,9 +8,9 @@ This decouples Dash callbacks from ingestion details and makes the sync
 operations testable and reusable outside the dashboard context.
 
 Functions:
-    sync_wallet()           — fetch wallet balance, persist to DB, return result
-    sync_inventory(steam_id) — fetch Steam inventory, return item list + stats
-    sync_transactions(max_pages) — fetch market history, persist to DB, return result
+    sync_wallet()           вЂ” fetch wallet balance, persist to DB, return result
+    sync_inventory(steam_id) вЂ” fetch Steam inventory, return item list + stats
+    sync_transactions(max_pages) вЂ” fetch market history, persist to DB, return result
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ class SteamAuthError(Exception):
     """Raised when Steam API rejects requests due to an expired or missing cookie."""
 
 
-# ─── Result types ──────────────────────────────────────────────────────────────
+# в”Ђв”Ђв”Ђ Result types в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 
 @dataclass
@@ -64,7 +64,7 @@ class TransactionsResult:
     error_code: str | None = None  # "NO_COOKIE" | "STALE_COOKIE" | "NETWORK" | None
 
 
-# ─── Service functions ─────────────────────────────────────────────────────────
+# в”Ђв”Ђв”Ђ Service functions в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 
 
 def sync_wallet() -> WalletResult:
@@ -94,8 +94,8 @@ def sync_wallet() -> WalletResult:
             with SessionLocal() as _db:
                 set_cookie_status(_db, "EXPIRED")
                 _db.commit()
-        except Exception:
-            pass
+        except Exception as exc_db:
+            logger.error("sync_wallet (AuthError): РћС€РёР±РєР° РѕР±РЅРѕРІР»РµРЅРёСЏ СЃС‚Р°С‚СѓСЃР° РІ Р‘Р”: %s", exc_db)
         return WalletResult(
             ok=False,
             balance=cached,
@@ -107,8 +107,21 @@ def sync_wallet() -> WalletResult:
         cached = get_saved_balance()
         if msg == "NO_COOKIE":
             error_code = "NO_COOKIE"
-        elif "403" in msg or "устарел" in msg.lower():
+        elif "403" in msg or "СѓСЃС‚Р°СЂРµР»" in msg.lower():
             error_code = "STALE_COOKIE"
+            try:
+                from src.domain.connection import SessionLocal
+                from src.domain.sql_repositories import set_cookie_status
+                with SessionLocal() as _db:
+                    set_cookie_status(_db, "EXPIRED")
+                    _db.commit()
+            except Exception as exc_db:
+                logger.error("sync_wallet: РћС€РёР±РєР° РѕР±РЅРѕРІР»РµРЅРёСЏ СЃС‚Р°С‚СѓСЃР° РІ Р‘Р”: %s", exc_db)
+            try:
+                from infra.redis_client import get_redis as _get_redis
+                _get_redis().set("cs2:system:cookie_expired", "1", ex=120)
+            except Exception as exc_redis:
+                logger.error("sync_wallet: РћС€РёР±РєР° Р·Р°РїРёСЃРё РІ Redis: %s", exc_redis)
         else:
             error_code = "NETWORK"
         logger.warning("sync_wallet failed: %s (cached=%.0f)", msg, cached or 0)
@@ -126,35 +139,24 @@ def sync_wallet() -> WalletResult:
         with SessionLocal() as _db:
             set_cookie_status(_db, "VALID")
             _db.commit()
-    except Exception:
-        pass
+    except Exception as exc_db:
+        logger.error("sync_wallet (success): РћС€РёР±РєР° РѕР±РЅРѕРІР»РµРЅРёСЏ СЃС‚Р°С‚СѓСЃР° РІ Р‘Р”: %s", exc_db)
     logger.info("sync_wallet ok: %.0f", balance)
     return WalletResult(
         ok=True,
         balance=balance,
-        message=f"Загружено: {int(balance):,} {settings.currency_symbol}",
+        message=f"Р—Р°РіСЂСѓР¶РµРЅРѕ: {int(balance):,} {settings.currency_symbol}",
         error_code=None,
     )
 
 
 def sync_inventory(steam_id: str) -> InventoryResult:
-    """
-    Fetch the Steam inventory for the given steam_id.
-
-    Returns raw item dicts as returned by frontend.inventory.fetch_inventory().
-    The caller is responsible for persisting/displaying items — this function
-    only fetches and normalises the response.
-    """
-    # fetch_inventory is synchronous — it owns its own event loop internally.
-    # Do NOT wrap in asyncio.new_event_loop().run_until_complete() — that
-    # would pass a list (the return value) to run_until_complete, which
-    # requires an awaitable and raises TypeError.
     from ui.inventory import fetch_inventory
 
     if not steam_id or not steam_id.strip():
         return InventoryResult(
             ok=False,
-            message="STEAM_ID не настроен — добавь STEAM_ID= в .env",
+            message="STEAM_ID РЅРµ РЅР°СЃС‚СЂРѕРµРЅ вЂ” РґРѕР±Р°РІСЊ STEAM_ID= РІ .env",
             error_code="NO_STEAM_ID",
         )
 
@@ -165,7 +167,7 @@ def sync_inventory(steam_id: str) -> InventoryResult:
         logger.error("sync_inventory failed for steam_id=%r: %s", sid, exc)
         return InventoryResult(
             ok=False,
-            message=f"Ошибка загрузки инвентаря: {exc}",
+            message=f"РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё РёРЅРІРµРЅС‚Р°СЂСЏ: {exc}",
             error_code="NETWORK",
         )
 
@@ -175,53 +177,54 @@ def sync_inventory(steam_id: str) -> InventoryResult:
         ok=True,
         items=items or [],
         count=count,
-        message=f"Загружено {count} предметов" if count else "Инвентарь пуст",
+        message=f"Р—Р°РіСЂСѓР¶РµРЅРѕ {count} РїСЂРµРґРјРµС‚РѕРІ" if count else "РРЅРІРµРЅС‚Р°СЂСЊ РїСѓСЃС‚",
     )
 
 
 def sync_transactions(max_pages: int = 10) -> TransactionsResult:
-    """
-    Fetch Steam Market CS2 transaction history and compute annual P&L.
-
-    Does NOT persist to DB — the caller (callback or CLI) handles persistence.
-    This is intentional: the service layer stays stateless so it can be used
-    in test/CLI contexts without side effects.
-
-    Returns computed annual_pnl so callers can upsert without re-importing
-    ingestion modules.
-    """
     from scrapper.steam_transactions import compute_annual_pnl, fetch_market_history
 
     transactions, msg = fetch_market_history(max_pages=max_pages)
 
-    # Detect real errors: fetch_market_history returns "Загружено N транзакций CS2"
-    # on success (even N=0).  Any other message string signals an actual failure.
     _is_auth_error = (
         msg == "NO_COOKIE"
         or "403" in msg
-        or "устарел" in msg.lower()
+        or "СѓСЃС‚Р°СЂРµР»" in msg.lower()
         or "success=false" in msg.lower()
     )
     _is_error = _is_auth_error or (
-        not msg.startswith("Загружено") and msg != "NO_COOKIE"
-        and not transactions  # truly unexpected empty response
+        not msg.startswith("Р—Р°РіСЂСѓР¶РµРЅРѕ") and msg != "NO_COOKIE"
+        and not transactions
     )
 
     if _is_auth_error:
-        logger.warning("sync_transactions: auth error — %s", msg)
+        logger.warning("sync_transactions: auth error вЂ” %s", msg)
         if msg == "NO_COOKIE":
             error_code = "NO_COOKIE"
         else:
             error_code = "STALE_COOKIE"
+            try:
+                from src.domain.connection import SessionLocal
+                from src.domain.sql_repositories import set_cookie_status
+                with SessionLocal() as _db:
+                    set_cookie_status(_db, "EXPIRED")
+                    _db.commit()
+            except Exception as exc_db:
+                logger.error("sync_transactions: РћС€РёР±РєР° РѕР±РЅРѕРІР»РµРЅРёСЏ СЃС‚Р°С‚СѓСЃР° РІ Р‘Р”: %s", exc_db)
+            try:
+                from infra.redis_client import get_redis as _get_redis
+                _get_redis().set("cs2:system:cookie_expired", "1", ex=120)
+            except Exception as exc_redis:
+                logger.error("sync_transactions: РћС€РёР±РєР° Р·Р°РїРёСЃРё РІ Redis: %s", exc_redis)
+
         return TransactionsResult(ok=False, message=msg, error_code=error_code)
 
     if _is_error:
-        logger.warning("sync_transactions: network/parse error — %s", msg)
+        logger.warning("sync_transactions: network/parse error вЂ” %s", msg)
         return TransactionsResult(ok=False, message=msg, error_code="NETWORK")
 
-    # HTTP 200 + success=true — zero transactions is valid (empty history)
     if not transactions:
-        logger.info("sync_transactions: no CS2 transactions found (empty history) — %s", msg)
+        logger.info("sync_transactions: no CS2 transactions found (empty history) вЂ” %s", msg)
         return TransactionsResult(
             ok=True,
             transactions=[],
@@ -245,5 +248,5 @@ def sync_transactions(max_pages: int = 10) -> TransactionsResult:
         buy_count=buy_count,
         sell_count=sell_count,
         annual_pnl=annual_pnl,
-        message=f"Загружено {len(transactions)} транзакций CS2",
+        message=f"Р—Р°РіСЂСѓР¶РµРЅРѕ {len(transactions)} С‚СЂР°РЅР·Р°РєС†РёР№ CS2",
     )

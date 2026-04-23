@@ -44,6 +44,7 @@ _TAG_TO_CTYPE: dict[str, str] = {
     "tag_CSGO_Type_WeaponCase": "Weapon Case",
     "tag_CSGO_Type_SouvenirPackage": "Souvenir Package",
     "tag_CSGO_Type_StickerCapsule": "Sticker Capsule",
+    "tag_CSGO_Type_Tool": "Tool",
 }
 
 # Category tags to query (one request batch per tag)
@@ -83,10 +84,16 @@ def _resolve_container_type(name: str, raw_ctype: str) -> str:
       - group keyword present → "Event Capsule"
       - otherwise → "Sticker Capsule"
     """
+    low = name.lower()
+
+    if raw_ctype == "Tool":
+        if "terminal" in low:
+            return "Sealed Terminal"
+        return "Tool"  # db_writer skips unknown types — non-terminal tools are ignored
+
     if raw_ctype != "Sticker Capsule":
         return raw_ctype
 
-    low = name.lower()
     if "autograph" in low:
         return "Autograph Capsule"
     if any(kw in low for kw in _CAPSULE_GROUP_WORDS):

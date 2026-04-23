@@ -47,6 +47,30 @@ from ui.theme import verdict_color
 
 logger = logging.getLogger(__name__)
 
+_latest_ts_cache: dict = {}
+_latest_ts_cache_at: float = 0.0
+
+
+def _get_latest_ts_map() -> dict:
+    import time
+    global _latest_ts_cache, _latest_ts_cache_at
+    if time.monotonic() - _latest_ts_cache_at < 60:
+        return _latest_ts_cache
+    from sqlalchemy import func as _func
+    from src.domain.connection import SessionLocal as _SL
+    from src.domain.models import FactContainerPrice as _FCP
+    try:
+        with _SL() as _db:
+            rows = _db.query(
+                _FCP.container_id,
+                _func.max(_FCP.timestamp).label("max_ts"),
+            ).group_by(_FCP.container_id).all()
+            _latest_ts_cache = {str(cid): ts for cid, ts in rows if ts}
+            _latest_ts_cache_at = time.monotonic()
+    except Exception:
+        pass
+    return _latest_ts_cache
+
 
 def _render_balance_tab(wallet_balance: Any, inventory_data: Any) -> html.Div:
     from ui.balance import render_balance
@@ -205,6 +229,8 @@ def register_callbacks(app: Any) -> None:
         except Exception:
             ts = None
         if ts and ts != current_ts:
+            global _latest_ts_cache_at
+            _latest_ts_cache_at = 0.0  # force refresh on next sort render
             return ts
         raise dash.exceptions.PreventUpdate
 
@@ -281,22 +307,32 @@ def register_callbacks(app: Any) -> None:
         Input("inventory-store", "data"),
         Input("sidebar-sort", "value"),
         Input("blacklist-view-store", "data"),
+        Input("sidebar-type-filter", "value"),
     )
     def render_container_list(
-        invest: Any, selected_cid: Any, search: Any, inventory_data: Any, sort: Any, show_blacklisted: Any
+        invest: Any, selected_cid: Any, search: Any, inventory_data: Any, sort: Any, show_blacklisted: Any, type_filter: Any
     ) -> Any:
         invest = invest or {}
         search = (search or "").lower().strip()
-        sort = sort or "newest"
+        sort = sort or "recently_updated"
+        type_filter = (type_filter or "").strip()
         show_blacklisted = bool(show_blacklisted)
         all_containers = _get_containers(blacklisted=show_blacklisted)
 
+        if type_filter:
+            all_containers = [c for c in all_containers if str(c.container_type) == type_filter]
+
+        latest_ts_map: dict = _get_latest_ts_map() if sort == "recently_updated" else {}
+
         def _main_key(c):
+            from datetime import datetime as _dt2
             cid = str(c.container_id)
             sig = invest.get(cid, {})
             price = sig.get("current_price") or 0.0
             volume = sig.get("quantity") or 0
             name = str(c.container_name)
+            if sort == "recently_updated":
+                return latest_ts_map.get(cid) or _dt2.min
             if sort in ("newest", "oldest"):
                 return name
             if sort == "price_asc":
@@ -309,7 +345,9 @@ def register_callbacks(app: Any) -> None:
                 return volume if volume > 0 else float("inf")
             return name
 
-        reverse_main = sort == "oldest"
+        reverse_main = sort in ("oldest",)
+        if sort == "recently_updated":
+            reverse_main = True
         all_containers = sorted(all_containers, key=_main_key, reverse=reverse_main)
 
         # Build owned count map: container_name -> total count
@@ -809,18 +847,20 @@ def register_callbacks(app: Any) -> None:
         Output("app-toast", "is_open", allow_duplicate=True),
         Output("app-toast", "icon", allow_duplicate=True),
         Input("btn-sync-prices", "n_clicks"),
+        State("system-type-filter", "value"),
         running=[
             (Output("btn-sync-prices", "disabled"), True, False),
             (Output("btn-sync-prices", "children"), [dbc.Spinner(size="sm"), " Запуск…"], "Sync Prices"),
         ],
         prevent_initial_call=True,
     )
-    def do_sync_prices(n: Any) -> tuple:
+    def do_sync_prices(n: Any, type_filter: Any) -> tuple:
         if not n:
             raise dash.exceptions.PreventUpdate
         import requests as _req
         try:
-            r = _req.post(f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/sync/market/prices", timeout=5)
+            body = {"container_type": type_filter or ""}
+            r = _req.post(f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/sync/market/prices", json=body, timeout=5)
             data = r.json()
             if data.get("already_running"):
                 return "Уже выполняется — дождись завершения.", "Цены", True, "warning"
@@ -862,21 +902,24 @@ def register_callbacks(app: Any) -> None:
         Output("app-toast", "is_open", allow_duplicate=True),
         Output("app-toast", "icon", allow_duplicate=True),
         Input("btn-backfill-all", "n_clicks"),
+        State("system-type-filter", "value"),
         running=[
             (Output("btn-backfill-all", "disabled"), True, False),
             (Output("btn-backfill-all", "children"), [dbc.Spinner(size="sm"), " Запуск…"], "Backfill All"),
         ],
         prevent_initial_call=True,
     )
-    def do_backfill_all(n: Any) -> tuple:
+    def do_backfill_all(n: Any, type_filter: Any) -> tuple:
         if not n:
             raise dash.exceptions.PreventUpdate
         import requests as _req
         try:
-            r = _req.post(f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/sync/backfill", timeout=5)
+            body = {"container_type": type_filter or ""}
+            r = _req.post(f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/sync/backfill", json=body, timeout=5)
             data = r.json()
             if data.get("ok"):
-                return data.get("message", "Запущено"), "Backfill All (~60–110 мин)", True, "success"
+                label = f"Backfill — {type_filter}" if type_filter else "Backfill All (~60–110 мин)"
+                return data.get("message", "Запущено"), label, True, "success"
             return data.get("message", "Неизвестная ошибка"), "Ошибка", True, "warning"
         except Exception as exc:
             return str(exc), "Ошибка подключения", True, "danger"
