@@ -204,6 +204,7 @@ def _build_sparkline(
         h90 = history[-90:] if len(history) > 90 else history
 
     fig = go.Figure()
+    y_range = None
 
     if h90:
         xs = [h["timestamp"][:10] for h in h90]
@@ -220,6 +221,16 @@ def _build_sparkline(
                 hovertemplate=f"%{{x}}: %{{y:,.0f}}{_settings.currency_symbol}<extra></extra>",
             )
         )
+
+        # Compute y-range that always includes both price data and target lines
+        candidates = [min(ys), max(ys)]
+        if buy_target:
+            candidates.append(buy_target)
+        if sell_target:
+            candidates.append(sell_target)
+        y_min, y_max = min(candidates), max(candidates)
+        pad = (y_max - y_min) * 0.10 or y_max * 0.05
+        y_range = [y_min - pad, y_max + pad]
 
         if buy_target:
             fig.add_hline(
@@ -251,7 +262,7 @@ def _build_sparkline(
         plot_bgcolor="rgba(0,0,0,0)",
         margin=dict(l=0, r=40, t=4, b=4),
         xaxis=dict(visible=False),
-        yaxis=dict(visible=False),
+        yaxis=dict(visible=False, range=y_range if h90 else None),
         showlegend=False,
         height=70,
     )

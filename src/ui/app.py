@@ -28,7 +28,7 @@ from ui.helpers import (
 
 logger = logging.getLogger(__name__)
 
-_VERSION = "2.3.2"  # bump this to confirm new code is running
+_VERSION = "2.3.3"  # bump this to confirm new code is running
 
 # ─── Design token aliases (kept here for layout code) ──────────────────────────
 _BG_WARN = "#3d2b00"  # stale calendar warning background (not in theme)
