@@ -28,7 +28,7 @@ from ui.helpers import (
 
 logger = logging.getLogger(__name__)
 
-_VERSION = "2.3.3"  # bump this to confirm new code is running
+_VERSION = "2.3.8"  # bump this to confirm new code is running
 
 # ─── Design token aliases (kept here for layout code) ──────────────────────────
 _BG_WARN = "#3d2b00"  # stale calendar warning background (not in theme)
@@ -159,6 +159,7 @@ def create_dash_app() -> dash.Dash:
                             dcc.Dropdown(
                                 id="sidebar-sort",
                                 options=[
+                                    {"label": "Недавно обновлённые", "value": "recently_updated"},
                                     {"label": "Новые сначала", "value": "newest"},
                                     {"label": "Старые сначала", "value": "oldest"},
                                     {"label": "Дешевые сначала", "value": "price_asc"},
@@ -166,7 +167,29 @@ def create_dash_app() -> dash.Dash:
                                     {"label": "Большой объём", "value": "volume_desc"},
                                     {"label": "Малый объём", "value": "volume_asc"},
                                 ],
-                                value="newest",
+                                value="recently_updated",
+                                clearable=False,
+                                style={
+                                    "backgroundColor": _BG,
+                                    "color": _TEXT,
+                                    "borderColor": _BORDER,
+                                    "fontSize": "11px",
+                                    "marginBottom": "4px",
+                                },
+                                className="sidebar-sort-dropdown",
+                            ),
+                            dcc.Dropdown(
+                                id="sidebar-type-filter",
+                                options=[
+                                    {"label": "Все типы", "value": ""},
+                                    {"label": "Кейсы", "value": "Weapon Case"},
+                                    {"label": "Сувенирные пакеты", "value": "Souvenir Package"},
+                                    {"label": "Стикер-капсулы", "value": "Sticker Capsule"},
+                                    {"label": "Автограф-капсулы", "value": "Autograph Capsule"},
+                                    {"label": "Event-капсулы", "value": "Event Capsule"},
+                                    {"label": "Терминалы", "value": "Sealed Terminal"},
+                                ],
+                                value="",
                                 clearable=False,
                                 style={
                                     "backgroundColor": _BG,
@@ -292,11 +315,33 @@ def create_dash_app() -> dash.Dash:
                                             n_clicks=0,
                                             style={"fontSize": "11px", "padding": "1px 8px"},
                                         ),
+                                        dcc.Dropdown(
+                                            id="system-type-filter",
+                                            options=[
+                                                {"label": "Все типы", "value": ""},
+                                                {"label": "Кейсы", "value": "Weapon Case"},
+                                                {"label": "Сувенирные пакеты", "value": "Souvenir Package"},
+                                                {"label": "Стикер-капсулы", "value": "Sticker Capsule"},
+                                                {"label": "Автограф-капсулы", "value": "Autograph Capsule"},
+                                                {"label": "Event-капсулы", "value": "Event Capsule"},
+                                                {"label": "Терминалы", "value": "Sealed Terminal"},
+                                            ],
+                                            value="",
+                                            clearable=False,
+                                            style={
+                                                "backgroundColor": _BG,
+                                                "color": _TEXT,
+                                                "borderColor": _BORDER,
+                                                "fontSize": "11px",
+                                                "width": "180px",
+                                            },
+                                            className="sidebar-sort-dropdown",
+                                        ),
                                         dcc.Interval(
                                             id="worker-progress-interval",
                                             interval=3_000,
                                             n_intervals=0,
-                                            disabled=True,
+                                            disabled=False,
                                         ),
                                     ], style={"display": "flex", "gap": "10px", "alignItems": "center", "marginBottom": "16px"}),
                                 ],
