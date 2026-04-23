@@ -8,6 +8,7 @@ renderers in frontend/renderers/, shared helpers in frontend/helpers.py.
 from __future__ import annotations
 
 import logging
+import time
 
 import dash
 import dash_bootstrap_components as dbc
@@ -15,6 +16,7 @@ from dash import dcc, html
 
 from ui.cache import init_cache
 from ui.callbacks import register_callbacks
+from infra.redis_client import get_redis
 from ui.helpers import (
     _BG,
     _BG2,
