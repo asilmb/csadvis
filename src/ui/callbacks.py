@@ -704,6 +704,7 @@ def register_callbacks(app: Any) -> None:
         Input("balance-refresh-store", "data"),
         Input("price-count-store", "data"),
         Input("inventory-show-all", "value"),
+        Input("armory-pass-store", "data"),
     )
     def render_tab(
         tab: Any,
@@ -715,9 +716,23 @@ def register_callbacks(app: Any) -> None:
         _balance_refresh: Any,
         price_count: Any,
         show_all_inventory: Any,
+        armory_store: Any,
     ) -> Any:
         invest = invest or {}
         raw_items = raw_items or []
+
+        # ── Armory pass settings: prefer in-session store, fall back to DB ────
+        if tab == "portfolio" and not armory_store:
+            try:
+                import json as _json
+                from src.domain.connection import SessionLocal as _SL
+                from src.domain.models import SystemSettings as _SS
+                with _SL() as _db:
+                    _row = _db.get(_SS, "armory_pass_settings")
+                    if _row and _row.value:
+                        armory_store = _json.loads(_row.value)
+            except Exception:
+                pass
 
         # ── F-02: cold-start banner ───────────────────────────────────────────
         cold_start_banner = None
@@ -768,7 +783,7 @@ def register_callbacks(app: Any) -> None:
         if tab == "inventory":
             return _wrap(_safe(_render_inventory, inventory_data, invest, show_all=bool(show_all_inventory)))
         if tab == "portfolio":
-            return _wrap(_safe(_render_portfolio, portfolio_balance, inventory_data, invest))
+            return _wrap(_safe(_render_portfolio, portfolio_balance, inventory_data, invest, armory_store or {}))
         if tab == "balance":
             return _wrap(_safe(_render_balance_tab, portfolio_balance, inventory_data))
         if tab == "analytics":
@@ -912,7 +927,7 @@ def register_callbacks(app: Any) -> None:
         Input("btn-backfill-active", "n_clicks"),
         running=[
             (Output("btn-backfill-active", "disabled"), True, False),
-            (Output("btn-backfill-active", "children"), [dbc.Spinner(size="sm"), " Запуск…"], "Backfill Active"),
+            (Output("btn-backfill-active", "children"), [dbc.Spinner(size="sm"), " Запуск…"], "Backfill Позиции"),
         ],
         prevent_initial_call=True,
     )
@@ -924,8 +939,8 @@ def register_callbacks(app: Any) -> None:
             r = _req.post(f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/sync/backfill/active", timeout=5)
             data = r.json()
             if data.get("ok"):
-                return data.get("message", "Запущено"), "Backfill Active", True, "success"
-            return data.get("message", "Нет открытых позиций"), "Backfill Active", True, "warning"
+                return data.get("message", "Запущено"), "Backfill Позиции", True, "success"
+            return data.get("message", "Нет открытых позиций"), "Backfill Позиции", True, "warning"
         except Exception as exc:
             return str(exc), "Ошибка подключения", True, "danger"
 
@@ -1358,25 +1373,49 @@ def register_callbacks(app: Any) -> None:
     # ── F-09: Armory Pass calculator callback ─────────────────────────────────
     @app.callback(
         Output("ap-result-output", "children"),
-        Input("ap-container-dropdown", "value"),
-        Input("ap-pass-cost-input", "value"),
-        Input("ap-stars-in-pass-input", "value"),
-        Input("ap-stars-per-case-input", "value"),
+        Output("armory-pass-store", "data"),
+        Input("ap-calculate-btn", "n_clicks"),
+        State("ap-container-dropdown", "value"),
+        State("ap-pass-cost-input", "value"),
+        State("ap-stars-in-pass-input", "value"),
+        State("ap-stars-per-case-input", "value"),
         prevent_initial_call=True,
     )
     def update_armory_pass_result(
+        _n_clicks: int | None,
         container_name: str | None,
         pass_cost: float | None,
         stars_in_pass: int | None,
         stars_per_case: int | None,
     ) -> Any:
+        import json as _json
         from src.domain.armory_pass import compare_armory_pass
+
+        saved = {
+            "container": container_name,
+            "pass_cost": pass_cost,
+            "stars_in_pass": stars_in_pass,
+            "stars_per_case": stars_per_case,
+        }
+
+        try:
+            from src.domain.connection import SessionLocal as _SL
+            from src.domain.models import SystemSettings as _SS
+            with _SL() as _db:
+                _row = _db.get(_SS, "armory_pass_settings")
+                if _row is None:
+                    _db.add(_SS(key="armory_pass_settings", value=_json.dumps(saved)))
+                else:
+                    _row.value = _json.dumps(saved)
+                _db.commit()
+        except Exception:
+            pass
 
         if not container_name or pass_cost is None:
             return html.Span(
                 "Введи цену Armory Pass и выбери контейнер для расчёта.",
                 style={"color": _MUTED, "fontSize": "12px"},
-            )
+            ), saved
 
         price_now = _get_current_steam_prices()
         pd_entry = price_now.get(container_name, {})
@@ -1386,7 +1425,7 @@ def register_callbacks(app: Any) -> None:
             return html.Span(
                 f"Нет рыночной цены для «{container_name}» — обнови данные.",
                 style={"color": _YELLOW, "fontSize": "12px"},
-            )
+            ), saved
 
         sip = int(stars_in_pass) if stars_in_pass else 5
         spc = int(stars_per_case) if stars_per_case else 1
@@ -1394,7 +1433,7 @@ def register_callbacks(app: Any) -> None:
             return html.Span(
                 "Звёзд за контейнер не может превышать звёзд в пассе.",
                 style={"color": _RED, "fontSize": "12px"},
-            )
+            ), saved
 
         try:
             result = compare_armory_pass(
@@ -1407,7 +1446,7 @@ def register_callbacks(app: Any) -> None:
                 steam_fee_fixed=_FEE_FIXED,
             )
         except ValueError as exc:
-            return html.Span(str(exc), style={"color": _RED, "fontSize": "12px"})
+            return html.Span(str(exc), style={"color": _RED, "fontSize": "12px"}), saved
 
         rec_color = _GREEN if result.recommendation == "MARKET" else _ORANGE
         signal_color = {"SELL": _GREEN, "WAIT": _YELLOW, "AVOID": _RED}.get(result.sell_signal, _MUTED)
@@ -1443,7 +1482,7 @@ def register_callbacks(app: Any) -> None:
                     style={"marginTop": "4px"},
                 ),
             ]
-        )
+        ), saved
 
     @app.callback(
         Output("last-sync-indicator", "children"),

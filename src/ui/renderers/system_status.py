@@ -310,8 +310,8 @@ def render_system_status(health=None) -> html.Div:
             dbc.Col(html.Div([
                 _group_label("История цен"),
                 _btn_group(
-                    dbc.Button("Backfill Active", id="btn-backfill-active", color="warning", outline=True, size="sm", n_clicks=0),
-                    dbc.Button("Backfill All", id="btn-backfill-all", color="warning", outline=True, size="sm", n_clicks=0),
+                    dbc.Button("Backfill Позиции", id="btn-backfill-active", color="warning", outline=True, size="sm", n_clicks=0),
+                    dbc.Button("Backfill All *", id="btn-backfill-all", color="warning", outline=True, size="sm", n_clicks=0),
                 ),
             ]), width="auto"),
             dbc.Col(html.Div([
@@ -332,9 +332,9 @@ def render_system_status(health=None) -> html.Div:
         ], className="g-3 align-items-start", style={"marginBottom": "20px"}),
         dbc.Tooltip("Загружает актуальный инвентарь Steam", target="btn-sync-inventory", placement="bottom"),
         dbc.Tooltip("Обновляет список контейнеров с рынка Steam", target="btn-sync-catalog", placement="bottom"),
-        dbc.Tooltip("Получает текущие цены на все контейнеры", target="btn-sync-prices", placement="bottom"),
-        dbc.Tooltip("Загружает историю цен только для контейнеров с открытыми позициями", target="btn-backfill-active", placement="bottom"),
-        dbc.Tooltip("Загружает историю цен для всех контейнеров (~60–110 мин)", target="btn-backfill-all", placement="bottom"),
+        dbc.Tooltip("Получает текущие цены. Тип определяется фильтром выше (*)", target="btn-sync-prices", placement="bottom"),
+        dbc.Tooltip("История цен только для контейнеров с открытыми позициями. Фильтр типа не применяется.", target="btn-backfill-active", placement="bottom"),
+        dbc.Tooltip("История цен для выбранного типа контейнеров. Тип определяется фильтром выше (*). По умолчанию — все типы (~2 ч).", target="btn-backfill-all", placement="bottom"),
         dbc.Tooltip("Очищает очередь задач воркера", target="btn-clear-queue", placement="bottom"),
         dbc.Tooltip("Проверяет токен и наличие блокировки Steam", target="btn-ping-steam", placement="bottom"),
         dbc.Tooltip("Открыть форму ввода Steam cookie вручную", target="btn-open-cookie-modal", placement="bottom"),

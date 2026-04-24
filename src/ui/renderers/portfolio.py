@@ -70,6 +70,7 @@ def _render_portfolio(
     balance: float | None,
     inventory_data: list | None,
     invest_signals: dict,
+    armory_store: dict | None = None,
 ) -> html.Div:
     """Portfolio advisor tab — 40/40/20 allocation plan."""
     # Try saved balance if not yet submitted
@@ -702,6 +703,7 @@ def _render_portfolio(
     sections.append(reserve_section)
 
     # ── Step 4 — Armory Pass calculator (F-09) ────────────────────────────────
+    _ap = armory_store or {}
     container_options = [
         {"label": str(c.container_name), "value": str(c.container_name)} for c in containers
     ]
@@ -733,6 +735,7 @@ def _render_portfolio(
                                 dcc.Dropdown(
                                     id="ap-container-dropdown",
                                     options=container_options,
+                                    value=_ap.get("container"),
                                     placeholder="Выбери контейнер…",
                                     style={
                                         "backgroundColor": _BG2,
@@ -755,6 +758,7 @@ def _render_portfolio(
                                     type="number",
                                     min=0,
                                     step=0.01,
+                                    value=_ap.get("pass_cost"),
                                     placeholder="напр. 3.99",
                                     style={
                                         "backgroundColor": _BG2,
@@ -768,46 +772,60 @@ def _render_portfolio(
                         dbc.Col(
                             [
                                 html.Label(
-                                    "Звёзд в пассе / за контейнер",
+                                    "Звёзд в пассе",
                                     style={"color": _MUTED, "fontSize": "11px"},
                                 ),
-                                dbc.Row(
-                                    [
-                                        dbc.Col(
-                                            dbc.Input(
-                                                id="ap-stars-in-pass-input",
-                                                type="number",
-                                                min=1,
-                                                step=1,
-                                                value=5,
-                                                placeholder="5",
-                                                style={
-                                                    "backgroundColor": _BG2,
-                                                    "color": _TEXT,
-                                                    "fontSize": "12px",
-                                                },
-                                            ),
-                                        ),
-                                        dbc.Col(
-                                            dbc.Input(
-                                                id="ap-stars-per-case-input",
-                                                type="number",
-                                                min=1,
-                                                step=1,
-                                                value=1,
-                                                placeholder="1",
-                                                style={
-                                                    "backgroundColor": _BG2,
-                                                    "color": _TEXT,
-                                                    "fontSize": "12px",
-                                                },
-                                            ),
-                                        ),
-                                    ],
-                                    className="g-1",
+                                dbc.Input(
+                                    id="ap-stars-in-pass-input",
+                                    type="number",
+                                    min=1,
+                                    step=1,
+                                    value=_ap.get("stars_in_pass", 5),
+                                    placeholder="5",
+                                    style={
+                                        "backgroundColor": _BG2,
+                                        "color": _TEXT,
+                                        "fontSize": "12px",
+                                    },
                                 ),
                             ],
-                            md=3,
+                            md=2,
+                        ),
+                        dbc.Col(
+                            [
+                                html.Label(
+                                    "Звёзд за контейнер",
+                                    style={"color": _MUTED, "fontSize": "11px"},
+                                ),
+                                dbc.Input(
+                                    id="ap-stars-per-case-input",
+                                    type="number",
+                                    min=1,
+                                    step=1,
+                                    value=_ap.get("stars_per_case", 1),
+                                    placeholder="1",
+                                    style={
+                                        "backgroundColor": _BG2,
+                                        "color": _TEXT,
+                                        "fontSize": "12px",
+                                    },
+                                ),
+                            ],
+                            md=2,
+                        ),
+                        dbc.Col(
+                            [
+                                html.Label(" ", style={"fontSize": "11px"}),
+                                dbc.Button(
+                                    "Подсчитать",
+                                    id="ap-calculate-btn",
+                                    color="primary",
+                                    size="sm",
+                                    style={"width": "100%", "fontSize": "12px"},
+                                ),
+                            ],
+                            md=2,
+                            style={"display": "flex", "flexDirection": "column", "justifyContent": "flex-end"},
                         ),
                     ],
                     className="g-2 mb-2",

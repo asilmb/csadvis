@@ -28,7 +28,7 @@ from ui.helpers import (
 
 logger = logging.getLogger(__name__)
 
-_VERSION = "2.4.2"  # bump this to confirm new code is running
+_VERSION = "2.4.4"  # bump this to confirm new code is running
 
 # ─── Design token aliases (kept here for layout code) ──────────────────────────
 _BG_WARN = "#3d2b00"  # stale calendar warning background (not in theme)
@@ -211,6 +211,7 @@ def create_dash_app() -> dash.Dash:
                                 },
                             ),
                             # Stores
+                            dcc.Store(id="armory-pass-store", data={}),
                             dcc.Store(id="selected-cid", data=default_id),
                             dcc.Store(id="invest-store", data={}),
                             dcc.Store(id="raw-items-store", data=[]),
@@ -315,6 +316,16 @@ def create_dash_app() -> dash.Dash:
                                             n_clicks=0,
                                             style={"fontSize": "11px", "padding": "1px 8px"},
                                         ),
+                                        html.Div([
+                                            html.Div(
+                                                "Фильтр типа",
+                                                style={"color": "#888", "fontSize": "10px", "marginBottom": "2px"},
+                                            ),
+                                            html.Div(
+                                                "→ Sync Prices, Backfill All",
+                                                style={"color": "#555", "fontSize": "9px"},
+                                            ),
+                                        ]),
                                         dcc.Dropdown(
                                             id="system-type-filter",
                                             options=[
