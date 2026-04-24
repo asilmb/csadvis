@@ -197,7 +197,7 @@ def register_callbacks(app: Any) -> None:
         Output("global-worker-status", "children"),
         Output("worker-progress-interval", "disabled", allow_duplicate=True),
         Input("task-poll-interval", "n_intervals"),
-        prevent_initial_call=False,
+        prevent_initial_call="initial_duplicate",
     )
     def update_global_worker_status(_n: Any) -> Any:
         import requests as _req
