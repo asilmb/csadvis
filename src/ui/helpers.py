@@ -260,11 +260,31 @@ def _build_sparkline(
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=0, r=40, t=4, b=4),
-        xaxis=dict(visible=False),
-        yaxis=dict(visible=False, range=y_range if h90 else None),
+        margin=dict(l=0, r=52, t=4, b=18),
+        xaxis=dict(
+            visible=True,
+            showticklabels=True,
+            tickformat="%d %b",
+            nticks=4,
+            tickfont=dict(color=_MUTED, size=8),
+            showgrid=False,
+            zeroline=False,
+            tickangle=0,
+        ),
+        yaxis=dict(
+            visible=True,
+            showticklabels=True,
+            side="right",
+            nticks=4,
+            tickfont=dict(color=_MUTED, size=8),
+            tickformat=",.0f",
+            showgrid=True,
+            gridcolor="rgba(255,255,255,0.06)",
+            zeroline=False,
+            range=y_range if h90 else None,
+        ),
         showlegend=False,
-        height=70,
+        height=110,
     )
     return fig
 

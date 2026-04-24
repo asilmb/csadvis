@@ -18,7 +18,7 @@ router = APIRouter(prefix="/system", tags=["system"])
 
 
 class UpdateCookieRequest(BaseModel):
-    value: str
+    value: str = ""
     session_note: str = ""
     sessionid: str = ""
     steam_id: str = ""
@@ -173,28 +173,32 @@ async def ping_steam_endpoint() -> dict:
 @router.post("/update-cookie")
 def update_cookie_endpoint(req: UpdateCookieRequest) -> dict:
     value = req.value.strip()
-    if not value:
-        raise HTTPException(status_code=400, detail="Cookie value cannot be empty")
+    sessionid = req.sessionid.strip()
+    steam_id = req.steam_id.strip()
 
-    logger.info("Cookie update requested — applying new value (masked: ***)")
+    if not value and not sessionid and not steam_id:
+        raise HTTPException(status_code=400, detail="Заполни хотя бы одно поле.")
+
+    logger.info("Cookie update requested (masked: ***)")
 
     from infra.steam_credentials import set_login_secure, set_session_id
-    set_login_secure(value)
-    if req.sessionid.strip():
-        set_session_id(req.sessionid.strip())
-    if req.steam_id.strip():
+    if value:
+        set_login_secure(value)
+    if sessionid:
+        set_session_id(sessionid)
+    if steam_id:
         try:
             from infra.redis_client import get_redis as _get_redis
-            _get_redis().set("cs2:config:steam_id", req.steam_id.strip())
+            _get_redis().set("cs2:config:steam_id", steam_id)
         except Exception as exc:
             logger.warning("Could not save steam_id to Redis: %s", exc)
 
-    from scrapper.steam_sync import sync_wallet
-    result = sync_wallet()
-
-    if not result.ok:
-        logger.warning("Cookie validation failed: error_code=%s", result.error_code)
-        return {"ok": False, "error": result.error_code or "VALIDATION_FAILED"}
+    if value:
+        from scrapper.steam_sync import sync_wallet
+        result = sync_wallet()
+        if not result.ok:
+            logger.warning("Cookie validation failed: error_code=%s", result.error_code)
+            return {"ok": False, "error": result.error_code or "VALIDATION_FAILED"}
 
     if req.session_note.strip():
         try:

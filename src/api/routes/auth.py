@@ -18,29 +18,32 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 class SteamAuthRequest(BaseModel):
-    steamLoginSecure: str
-    session_id: str
+    steamLoginSecure: str | None = None
+    session_id: str | None = None
 
-    @field_validator("steamLoginSecure", "session_id")
+    @field_validator("steamLoginSecure", "session_id", mode="before")
     @classmethod
-    def _not_empty(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("field must not be empty")
-        return v.strip()
+    def _strip_empty(cls, v: object) -> object:
+        if isinstance(v, str):
+            v = v.strip()
+            return v if v else None
+        return v
 
 
 @router.post("/steam")
 def set_steam_auth(req: SteamAuthRequest) -> dict:
     """
-    Encrypt both tokens via SteamCredentialManager.set_credentials() and
-    persist to Redis atomically.  Signals the worker to exit PAUSED_AUTH.
-
-    Encryption occurs immediately after validation — req.steamLoginSecure and
-    req.session_id exist only in this function's local scope.
+    Update only the credentials that were provided — each field is saved
+    independently.  At least one field must be non-empty.
     """
+    if not req.steamLoginSecure and not req.session_id:
+        raise HTTPException(status_code=422, detail="Заполни хотя бы одно поле.")
     try:
-        from infra.steam_credentials import _get_manager
-        _get_manager().set_credentials(req.steamLoginSecure, req.session_id)
+        from infra.steam_credentials import set_login_secure, set_session_id
+        if req.steamLoginSecure:
+            set_login_secure(req.steamLoginSecure)
+        if req.session_id:
+            set_session_id(req.session_id)
     except Exception as exc:
         logger.error("auth: credential storage failed — %s", exc)
         raise HTTPException(status_code=500, detail=f"Credential storage error: {exc}")

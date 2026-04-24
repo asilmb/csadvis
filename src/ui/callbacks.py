@@ -1862,10 +1862,8 @@ def _register_auth_modal_callbacks(app: dash.Dash) -> None:
         login_secure = (login_secure or "").strip()
         session_id   = (session_id   or "").strip()
 
-        if not login_secure:
-            return _err("steamLoginSecure не может быть пустым.")
-        if not session_id:
-            return _err("Session ID не может быть пустым.")
+        if not login_secure and not session_id:
+            return _err("Заполни хотя бы одно поле.")
 
         import requests as _req
         try:
@@ -1909,6 +1907,8 @@ def _register_cookie_callbacks(app: dash.Dash) -> None:
         if ctx.triggered_id == "cookie-close-btn":
             logger.debug("check_cookie_status: user closed modal")
             return False
+        if is_open:
+            raise dash.exceptions.PreventUpdate
 
         cookie_expired = False
         try:
@@ -1937,7 +1937,12 @@ def _register_cookie_callbacks(app: dash.Dash) -> None:
     )
     def submit_new_cookie(n_clicks, cookie_value, sessionid_value, session_note, steam_id_value):
         """POST new cookie + sessionid + session note + steam_id to API; close modal on success."""
-        if not n_clicks or not cookie_value:
+        if not n_clicks:
+            raise dash.exceptions.PreventUpdate
+        cookie_value = (cookie_value or "").strip()
+        sessionid_value = (sessionid_value or "").strip()
+        steam_id_value = (steam_id_value or "").strip()
+        if not cookie_value and not sessionid_value and not steam_id_value:
             raise dash.exceptions.PreventUpdate
         try:
             import requests

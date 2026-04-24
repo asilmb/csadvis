@@ -28,7 +28,7 @@ from ui.helpers import (
 
 logger = logging.getLogger(__name__)
 
-_VERSION = "2.3.8"  # bump this to confirm new code is running
+_VERSION = "2.4.1"  # bump this to confirm new code is running
 
 # ─── Design token aliases (kept here for layout code) ──────────────────────────
 _BG_WARN = "#3d2b00"  # stale calendar warning background (not in theme)
@@ -415,7 +415,7 @@ def create_dash_app() -> dash.Dash:
                             className="mb-3",
                             style={"fontSize": "13px"},
                         ),
-                        dbc.Label("steamLoginSecure", html_for="auth-login-secure-input"),
+                        dbc.Label("steamLoginSecure (оставь пустым если не изменился)", html_for="auth-login-secure-input"),
                         dbc.Input(
                             id="auth-login-secure-input",
                             type="password",
@@ -423,7 +423,7 @@ def create_dash_app() -> dash.Dash:
                             debounce=False,
                             className="mb-3",
                         ),
-                        dbc.Label("Session ID", html_for="auth-session-id-input"),
+                        dbc.Label("Session ID (оставь пустым если не изменился)", html_for="auth-session-id-input"),
                         dbc.Input(
                             id="auth-session-id-input",
                             type="text",
@@ -458,23 +458,19 @@ def create_dash_app() -> dash.Dash:
                         html.P(
                             "Введи значения куки из DevTools → Application → Cookies → steamcommunity.com."
                         ),
-                        dbc.Label("steamLoginSecure", html_for="cookie-input", className="mt-2"),
+                        dbc.Label("steamLoginSecure (оставь пустым если не изменился)", html_for="cookie-input", className="mt-2"),
                         dbc.Input(
                             id="cookie-input",
                             type="password",
                             placeholder="76561198…%7C%7C…",
                             debounce=False,
                         ),
-                        dbc.Label("sessionid", html_for="sessionid-input", className="mt-3"),
+                        dbc.Label("sessionid (оставь пустым если не изменился)", html_for="sessionid-input", className="mt-3"),
                         dbc.Input(
                             id="sessionid-input",
                             type="text",
                             placeholder="a1b2c3d4e5f6…",
                             debounce=False,
-                        ),
-                        html.Small(
-                            "sessionid требуется для загрузки истории транзакций.",
-                            className="text-muted",
                         ),
                         dbc.Label("Описание сессии (необязательно)", html_for="session-note-input", className="mt-3"),
                         dbc.Input(
@@ -483,16 +479,12 @@ def create_dash_app() -> dash.Dash:
                             placeholder="Напр.: Chrome, Windows, апрель 2026",
                             debounce=False,
                         ),
-                        dbc.Label("Steam ID (76561198...)", html_for="steam-id-input", className="mt-3"),
+                        dbc.Label("Steam ID (оставь пустым если не изменился)", html_for="steam-id-input", className="mt-3"),
                         dbc.Input(
                             id="steam-id-input",
                             type="text",
                             placeholder="76561198XXXXXXXXX",
                             debounce=False,
-                        ),
-                        html.Small(
-                            "Нужен для загрузки инвентаря. Находится в URL профиля Steam.",
-                            className="text-muted",
                         ),
                         html.Div(id="cookie-update-status", className="mt-2 text-danger"),
                     ]),

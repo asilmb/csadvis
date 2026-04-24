@@ -79,7 +79,7 @@ def compute_trade_advice(
     prices_90d.sort()
     data_source = "90d_steam"
 
-    if len(prices_90d) >= 20:
+    if len(prices_90d) >= 5:
         buy_target = _percentile(prices_90d, 20)
         sell_target = _percentile(prices_90d, 70)
         # FLIP-R4: cap sell target relative to buy_target (entry price proxy).
