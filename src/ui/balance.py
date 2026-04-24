@@ -12,6 +12,7 @@ Sections:
 from __future__ import annotations
 
 import logging
+import math
 from datetime import UTC, datetime
 from typing import Any
 
@@ -20,6 +21,8 @@ from dash import dcc, html
 
 from config import settings as _settings
 from scrapper.steam_wallet import get_saved_balance
+from src.domain.connection import SessionLocal as _SessionLocal
+from src.domain.models import LinkStatus, PositionTransactionGroup, TransactionGroup
 from src.domain.portfolio import (
     get_annual_summaries,
     get_balance_data,
@@ -47,7 +50,10 @@ _BLUE = _COLORS["blue"]
 # ─── Main renderer ─────────────────────────────────────────────────────────────
 
 
-def render_balance(wallet_balance: float | None, inventory_data: list | None) -> html.Div:
+_TX_PAGE_SIZE = 25
+
+
+def render_balance(wallet_balance: float | None, inventory_data: list | None, page: int = 1) -> html.Div:
     """Render the entire Balance tab."""
     if not wallet_balance:
         wallet_balance = get_saved_balance() or 0.0
@@ -63,6 +69,12 @@ def render_balance(wallet_balance: float | None, inventory_data: list | None) ->
     monthly_pnl = get_monthly_pnl(current_year)   # SQL GROUP BY — no per-row Python loop
     all_tx = get_transactions()
     annual_rows = get_annual_summaries()
+
+    # ── Pagination ────────────────────────────────────────────────────────────
+    total_tx = len(all_tx)
+    total_pages = max(1, math.ceil(total_tx / _TX_PAGE_SIZE))
+    page = max(1, min(page, total_pages))
+    paged_tx = all_tx[(page - 1) * _TX_PAGE_SIZE : page * _TX_PAGE_SIZE]
 
     def _fmt(v: float) -> str:
         return f"{int(v):,} {_settings.currency_symbol}"
@@ -253,7 +265,7 @@ def render_balance(wallet_balance: float | None, inventory_data: list | None) ->
     }
 
     tx_rows = []
-    for tx in all_tx:
+    for tx in paged_tx:
         ac = tx["action"]
         pnl_cell = html.Td(
             f"{int(tx['pnl']):+,} {_settings.currency_symbol}" if tx.get("pnl") is not None else "—",
@@ -396,9 +408,180 @@ def render_balance(wallet_balance: float | None, inventory_data: list | None) ->
                     className="align-items-center mb-2",
                 ),
                 tx_table,
+                html.Div(
+                    [
+                        dbc.Button(
+                            "←", id="tx-prev-btn", size="sm", color="secondary",
+                            outline=True, n_clicks=0, disabled=(page == 1),
+                            style={"minWidth": "36px"},
+                        ),
+                        html.Span(
+                            f"стр. {page} / {total_pages}  ·  {total_tx} сделок",
+                            style={"color": _MUTED, "fontSize": "12px", "padding": "0 12px"},
+                        ),
+                        dbc.Button(
+                            "→", id="tx-next-btn", size="sm", color="secondary",
+                            outline=True, n_clicks=0, disabled=(page == total_pages),
+                            style={"minWidth": "36px"},
+                        ),
+                    ],
+                    style={
+                        "display": "flex", "alignItems": "center",
+                        "justifyContent": "center", "marginTop": "10px", "gap": "4px",
+                    },
+                ),
             ]
         ),
         style={"backgroundColor": _BG2, "border": f"1px solid {_BORDER}"},
+    )
+
+    # ── Transaction groups ────────────────────────────────────────────────────
+    _grp_db = _SessionLocal()
+    try:
+        all_groups = (
+            _grp_db.query(TransactionGroup, PositionTransactionGroup)
+            .outerjoin(
+                PositionTransactionGroup,
+                PositionTransactionGroup.transaction_group_id == TransactionGroup.id,
+            )
+            .order_by(TransactionGroup.date_from.desc())
+            .all()
+        )
+    finally:
+        _grp_db.close()
+
+    def _groups_tab_rows(link_status_val: str) -> list:
+        rows = []
+        for g, ptg in all_groups:
+            status = ptg.link_status if ptg else LinkStatus.undefined
+            if status != link_status_val:
+                continue
+            dir_color = _GREEN if g.direction.value == "BUY" else _RED
+            ban_el: Any = html.Span()
+            from datetime import UTC, datetime
+            now = datetime.now(UTC).replace(tzinfo=None)
+            if g.trade_ban_expires_at and g.trade_ban_expires_at > now:
+                diff = g.trade_ban_expires_at - now
+                ban_el = dbc.Badge(
+                    f"🔒 {diff.days}d {diff.seconds//3600}h",
+                    color="warning", style={"fontSize": "9px", "fontFamily": "monospace"},
+                )
+            elif link_status_val == "undefined":
+                ban_el = dbc.Badge("✓ TRADEABLE", color="success", style={"fontSize": "9px"})
+
+            action_btns: Any = html.Span()
+            if link_status_val == "undefined":
+                action_btns = html.Div([
+                    dbc.Button("Создать", id={"type": "btn-grp-create", "group_id": g.id},
+                               size="sm", color="success", outline=True, n_clicks=0,
+                               style={"fontSize": "10px", "marginRight": "4px"}),
+                    dbc.Button("Привязать", id={"type": "btn-grp-link", "group_id": g.id},
+                               size="sm", color="info", outline=True, n_clicks=0,
+                               style={"fontSize": "10px", "marginRight": "4px"}),
+                    dbc.Button("Пропустить", id={"type": "btn-grp-skip", "group_id": g.id},
+                               size="sm", color="secondary", outline=True, n_clicks=0,
+                               style={"fontSize": "10px"}),
+                ], style={"display": "flex", "gap": "2px"})
+            elif link_status_val == "defined":
+                action_btns = dbc.Button(
+                    "Отвязать", id={"type": "btn-grp-unlink", "group_id": g.id},
+                    size="sm", color="secondary", outline=True, n_clicks=0,
+                    style={"fontSize": "10px"},
+                )
+            elif link_status_val == "skipped":
+                action_btns = dbc.Button(
+                    "Восстановить", id={"type": "btn-grp-restore", "group_id": g.id},
+                    size="sm", color="info", outline=True, n_clicks=0,
+                    style={"fontSize": "10px"},
+                )
+
+            link_el: Any = html.Span()
+            if link_status_val == "defined" and ptg and ptg.position_id:
+                link_el = html.Span(f"→ pos:{ptg.position_id[:8]}…",
+                                    style={"color": _GREEN, "fontSize": "10px"})
+            elif link_status_val == "skipped":
+                link_el = html.Span("SKIPPED", style={"color": _MUTED, "fontSize": "10px",
+                                                        "textDecoration": "line-through"})
+            else:
+                link_el = ban_el
+
+            rows.append(html.Tr([
+                html.Td(html.Span(g.direction.value, style={"color": dir_color, "fontWeight": "bold", "fontSize": "10px"})),
+                html.Td(html.Span(g.item_name, style={"color": _TEXT, "fontSize": "12px"})),
+                html.Td(f"×{g.count}", style={"color": _BLUE, "fontWeight": "bold", "textAlign": "center",
+                                               "fontFamily": "monospace"}),
+                html.Td(f"{g.price:,.0f} ₸", style={"textAlign": "right", "fontFamily": "monospace"}),
+                html.Td(g.date_from.strftime("%m-%d %H:%M"), style={"color": _MUTED, "fontSize": "11px",
+                                                                      "fontFamily": "monospace"}),
+                html.Td(link_el),
+                html.Td(action_btns),
+            ], style={"borderBottom": f"1px solid {_BG}"}))
+        return rows or [html.Tr([html.Td(
+            "Нет групп.", colSpan=7,
+            style={"color": _MUTED, "textAlign": "center", "padding": "14px", "fontSize": "12px", "fontStyle": "italic"},
+        )])]
+
+    _grp_th = {"color": _MUTED, "fontSize": "10px", "letterSpacing": "1.2px",
+                "textTransform": "uppercase", "backgroundColor": _BG2, "border": "none"}
+
+    def _groups_table(link_status_val: str) -> dbc.Table:
+        return dbc.Table(
+            [
+                html.Thead(html.Tr([
+                    html.Th("DIR", style=_grp_th),
+                    html.Th("ПРЕДМЕТ", style=_grp_th),
+                    html.Th("КОЛ.", style={**_grp_th, "textAlign": "center"}),
+                    html.Th("ЦЕНА", style={**_grp_th, "textAlign": "right"}),
+                    html.Th("ДИАПАЗОН", style=_grp_th),
+                    html.Th("СТАТУС", style=_grp_th),
+                    html.Th("ДЕЙСТВИЯ", style=_grp_th),
+                ])),
+                html.Tbody(_groups_tab_rows(link_status_val)),
+            ],
+            bordered=False, hover=True, responsive=True,
+            style={"backgroundColor": _BG, "fontSize": "12px"},
+        )
+
+    undef_count  = sum(1 for _, ptg in all_groups if (ptg.link_status if ptg else "undefined") == LinkStatus.undefined)
+    def_count    = sum(1 for _, ptg in all_groups if ptg and ptg.link_status == LinkStatus.defined)
+    skip_count   = sum(1 for _, ptg in all_groups if ptg and ptg.link_status == LinkStatus.skipped)
+
+    groups_section = dbc.Card(
+        dbc.CardBody([
+            dbc.Row([
+                dbc.Col(
+                    html.Div("ГРУППЫ ТРАНЗАКЦИЙ",
+                             style={"color": _MUTED, "fontSize": "10px", "letterSpacing": "1.5px", "paddingTop": "6px"}),
+                    width=True,
+                ),
+                dbc.Col(
+                    dbc.Button(
+                        [html.I(className="fa fa-magic me-1"), f"Разобрать предложения ({undef_count})"],
+                        id="btn-open-wizard",
+                        size="sm", color="info", outline=True, n_clicks=0,
+                        style={"fontSize": "11px"},
+                    ),
+                    width="auto",
+                ),
+            ], className="align-items-center mb-2"),
+            dcc.Tabs(
+                value="undefined",
+                style={"backgroundColor": _BG2},
+                colors={"border": _BORDER, "primary": _BLUE, "background": _BG2},
+                children=[
+                    dcc.Tab(label=f"Неопределённые ({undef_count})", value="undefined",
+                            className="custom-tab",
+                            children=[_groups_table("undefined")]),
+                    dcc.Tab(label=f"Привязанные ({def_count})", value="defined",
+                            className="custom-tab",
+                            children=[_groups_table("defined")]),
+                    dcc.Tab(label=f"Пропущенные ({skip_count})", value="skipped",
+                            className="custom-tab",
+                            children=[_groups_table("skipped")]),
+                ],
+            ),
+        ]),
+        style={"backgroundColor": _BG2, "border": f"1px solid {_BORDER}", "marginTop": "16px"},
     )
 
     return html.Div(
@@ -408,6 +591,7 @@ def render_balance(wallet_balance: float | None, inventory_data: list | None) ->
             chart_30d,
             monthly_chart,
             annual_section,
+            groups_section,
             tx_section,
         ]
     )

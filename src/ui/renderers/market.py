@@ -11,7 +11,12 @@ from dash import dcc, html
 
 from config import settings
 from src.domain.connection import SessionLocal
-from src.domain.models import DimContainer, DimUserPosition
+from src.domain.models import (
+    DimContainer,
+    DimUserPosition,
+    InvestmentPosition,
+    InvestmentPositionStatus,
+)
 from src.domain.trade_advisor import compute_trade_advice
 from ui.helpers import (
     _BG2,
@@ -543,4 +548,58 @@ def _render_market(
         className="mb-3",
     )
 
-    return html.Div([signal_card, advice_card])
+    # ── Investment positions for this container ──────────────────────────────
+    _pos_db3 = SessionLocal()
+    try:
+        open_positions = (
+            _pos_db3.query(InvestmentPosition)
+            .filter(
+                InvestmentPosition.container_id == container_id,
+                InvestmentPosition.status != InvestmentPositionStatus.sold,
+            )
+            .order_by(InvestmentPosition.opened_at.desc())
+            .all()
+        )
+    finally:
+        _pos_db3.close()
+
+    positions_section = html.Div()
+    if open_positions:
+        _status_colors = {"hold": "#ffd600", "on_sale": "#66c0f4", "sold": "#8f98a0"}
+        pos_rows = []
+        for p in open_positions:
+            sc = _status_colors.get(p.status.value, _MUTED)
+            pos_rows.append(
+                html.Div(
+                    [
+                        html.Span(p.name, style={"color": _TEXT, "fontSize": "12px", "fontWeight": "bold"}),
+                        html.Span(
+                            f"  {p.current_count}/{p.fixation_count} шт.",
+                            style={"color": _MUTED, "fontSize": "11px", "fontFamily": "monospace"},
+                        ),
+                        dbc.Badge(
+                            p.status.value.upper().replace("_", " "),
+                            style={"backgroundColor": sc, "color": "#000", "fontSize": "9px", "marginLeft": "8px"},
+                        ),
+                        html.Span(
+                            f"  buy {p.buy_price:,.0f} ₸  →  target {p.sale_target_price:,.0f} ₸",
+                            style={"color": _MUTED, "fontSize": "11px"},
+                        ),
+                    ],
+                    style={"padding": "6px 0", "borderBottom": f"1px solid {_BORDER}"},
+                )
+            )
+
+        positions_section = dbc.Card(
+            dbc.CardBody([
+                html.Div(
+                    "ПОЗИЦИИ",
+                    style={"color": _MUTED, "fontSize": "10px", "letterSpacing": "1.5px", "marginBottom": "8px"},
+                ),
+                *pos_rows,
+            ]),
+            style={"backgroundColor": _BG2, "border": f"1px solid {_BORDER}"},
+            className="mb-3",
+        )
+
+    return html.Div([signal_card, advice_card, positions_section])

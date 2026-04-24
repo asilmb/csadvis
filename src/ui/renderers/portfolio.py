@@ -5,6 +5,7 @@ Portfolio tab renderer — 40/40/20 allocation plan, stop-loss alerts, Armory Pa
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 
 import dash_bootstrap_components as dbc
 from dash import dcc, html
@@ -12,12 +13,19 @@ from dash import dcc, html
 from config import settings
 from scrapper.steam_wallet import get_saved_balance
 from src.domain.connection import SessionLocal
-from src.domain.models import DimUserPosition
+from src.domain.models import (
+    DimUserPosition,
+    FactContainerPrice,
+    InvestmentPosition,
+    InvestmentPositionStatus,
+    InvestmentPositionType,
+)
 from src.domain.portfolio_advisor import allocate_portfolio
 from src.domain.trade_advisor import compute_trade_advice
 from ui.helpers import (
     _BG,
     _BG2,
+    _BLUE,
     _BORDER,
     _FEE_DIV,
     _FEE_FIXED,
@@ -36,6 +44,368 @@ from ui.helpers import (
 from ui.url_generator import item_link
 
 logger = logging.getLogger(__name__)
+
+
+def _get_positions_with_price(db, position_type: InvestmentPositionType) -> list[tuple]:
+    """Return [(InvestmentPosition, current_price | None)] for open positions."""
+    positions = (
+        db.query(InvestmentPosition)
+        .filter(
+            InvestmentPosition.position_type == position_type,
+            InvestmentPosition.status != InvestmentPositionStatus.sold,
+        )
+        .order_by(InvestmentPosition.opened_at.desc())
+        .all()
+    )
+    result = []
+    for p in positions:
+        latest = (
+            db.query(FactContainerPrice)
+            .filter(FactContainerPrice.container_id == p.container_id)
+            .order_by(FactContainerPrice.timestamp.desc())
+            .first()
+        )
+        result.append((p, latest.price if latest else None))
+    return result
+
+
+def _position_card(p: InvestmentPosition, current_price: float | None) -> dbc.Card:
+    """Render a single InvestmentPosition card."""
+    accent = _ORANGE if p.position_type == InvestmentPositionType.flip else _GREEN
+    pct = (p.current_count / p.fixation_count * 100) if p.fixation_count else 0
+
+    status_colors = {
+        InvestmentPositionStatus.hold:    _YELLOW,
+        InvestmentPositionStatus.on_sale: _BLUE,
+        InvestmentPositionStatus.sold:    _MUTED,
+    }
+    status_color = status_colors.get(p.status, _MUTED)
+
+    # Trade ban from linked BUY groups — fetched lazily via relationship
+    from src.domain.models import PositionTransactionGroup, TransactionGroup, TransactionDirection
+    db_session = SessionLocal()
+    try:
+        buy_ptg = (
+            db_session.query(PositionTransactionGroup)
+            .join(TransactionGroup,
+                  TransactionGroup.id == PositionTransactionGroup.transaction_group_id)
+            .filter(
+                PositionTransactionGroup.position_id == p.id,
+                TransactionGroup.direction == TransactionDirection.BUY,
+                TransactionGroup.trade_ban_expires_at.isnot(None),
+            )
+            .order_by(TransactionGroup.trade_ban_expires_at.asc())
+            .first()
+        )
+        ban_expires = (
+            buy_ptg.transaction_group.trade_ban_expires_at if buy_ptg else None
+        )
+    finally:
+        db_session.close()
+
+    now = datetime.now(UTC).replace(tzinfo=None)
+    if ban_expires and ban_expires > now:
+        diff = ban_expires - now
+        days = diff.days
+        hours = diff.seconds // 3600
+        ban_el = dbc.Badge(
+            f"🔒 TRADE BAN {days}d {hours}h",
+            color="warning",
+            style={"fontSize": "10px", "fontFamily": "monospace"},
+        )
+    elif ban_expires:
+        ban_el = dbc.Badge("✓ TRADEABLE", color="success", style={"fontSize": "10px"})
+    else:
+        ban_el = html.Span()
+
+    delta_el = html.Span()
+    if current_price is not None:
+        delta_pct = (current_price - p.buy_price) / p.buy_price * 100
+        delta_color = _GREEN if delta_pct >= 0 else _RED
+        sign = "+" if delta_pct >= 0 else ""
+        delta_el = html.Span(
+            f"{sign}{delta_pct:.1f}%",
+            style={"color": delta_color, "fontSize": "10px", "marginLeft": "6px", "fontWeight": "bold"},
+        )
+
+    return dbc.Card(
+        dbc.CardBody(
+            [
+                dbc.Row([
+                    dbc.Col([
+                        html.Div(p.name, style={"color": _TEXT, "fontSize": "13px", "fontWeight": "bold"}),
+                        html.Div(
+                            [
+                                html.Span(
+                                    p.status.value.upper().replace("_", " "),
+                                    style={"color": status_color, "fontWeight": "bold", "fontSize": "10px", "letterSpacing": "0.5px"},
+                                ),
+                                html.Span(f" · открыта {p.opened_at.strftime('%Y-%m-%d')}", style={"color": _MUTED, "fontSize": "10px"}),
+                            ],
+                            style={"marginTop": "2px"},
+                        ),
+                    ], width=5),
+                    dbc.Col([
+                        html.Div("BUY", style={"color": _MUTED, "fontSize": "10px"}),
+                        html.Div(f"{p.buy_price:,.0f} ₸", style={"color": _TEXT, "fontWeight": "bold", "fontSize": "12px"}),
+                    ], width=2),
+                    dbc.Col([
+                        html.Div("NOW", style={"color": _MUTED, "fontSize": "10px"}),
+                        html.Div(
+                            [
+                                html.Span(
+                                    f"{current_price:,.0f} ₸" if current_price else "—",
+                                    style={"color": _BLUE, "fontWeight": "bold", "fontSize": "12px"},
+                                ),
+                                delta_el,
+                            ]
+                        ),
+                    ], width=2),
+                    dbc.Col([
+                        html.Div("TARGET", style={"color": _MUTED, "fontSize": "10px"}),
+                        html.Div(f"{p.sale_target_price:,.0f} ₸", style={"color": _GOLD, "fontWeight": "bold", "fontSize": "12px"}),
+                    ], width=3),
+                ]),
+                # Progress bar
+                html.Div(
+                    [
+                        dbc.Progress(
+                            value=pct,
+                            style={"height": "5px", "marginTop": "10px", "marginBottom": "4px"},
+                            color="warning" if p.position_type == InvestmentPositionType.flip else "success",
+                        ),
+                        html.Div(
+                            [
+                                html.Span(
+                                    f"{p.current_count}/{p.fixation_count} units",
+                                    style={"color": _MUTED, "fontSize": "10px", "fontFamily": "monospace"},
+                                ),
+                                ban_el,
+                            ],
+                            style={"display": "flex", "justifyContent": "space-between"},
+                        ),
+                    ]
+                ),
+            ],
+            style={"padding": "10px 14px"},
+        ),
+        style={
+            "backgroundColor": "#1a2433",
+            "borderLeft": f"3px solid {accent}",
+            "border": f"1px solid {_BORDER}",
+            "marginBottom": "8px",
+        },
+    )
+
+
+def _render_positions_section(positions_with_price: list, label: str) -> html.Div:
+    """Render a section of position cards with a header."""
+    if not positions_with_price:
+        return html.Div()
+    return html.Div(
+        [
+            html.Div(
+                label,
+                style={
+                    "color": _MUTED, "fontSize": "10px", "letterSpacing": "1.5px",
+                    "textTransform": "uppercase", "fontWeight": "600",
+                    "margin": "14px 0 8px",
+                },
+            ),
+            html.Div([_position_card(p, cp) for p, cp in positions_with_price]),
+        ]
+    )
+
+
+def _armorypass_card(p: InvestmentPosition, current_price: float | None) -> dbc.Card:
+    """Render one Armory Pass position card with editable progress."""
+    pct = (p.current_count / p.fixation_count * 100) if p.fixation_count else 0
+    net_per_unit = round(current_price / 1.15 - 5, 0) if current_price else None
+    net_total = net_per_unit * p.current_count if net_per_unit else None
+    profit_color = (
+        _GREEN if net_per_unit and net_per_unit > p.buy_price else _RED
+    ) if net_per_unit else _MUTED
+
+    return dbc.Card(
+        dbc.CardBody(
+            [
+                dbc.Row(
+                    [
+                        dbc.Col(
+                            [
+                                html.Div(p.name, style={"color": _TEXT, "fontSize": "13px", "fontWeight": "bold"}),
+                                html.Div(
+                                    f"Себестоимость: {p.buy_price:,.0f} ₸/шт.  ·  "
+                                    f"Безубыток: {p.sale_target_price:,.0f} ₸",
+                                    style={"color": _MUTED, "fontSize": "10px", "marginTop": "2px"},
+                                ),
+                            ],
+                            width=8,
+                        ),
+                        dbc.Col(
+                            html.Div(
+                                f"{current_price:,.0f} ₸" if current_price else "Нет цены",
+                                style={
+                                    "color": profit_color,
+                                    "fontWeight": "bold",
+                                    "fontSize": "12px",
+                                    "textAlign": "right",
+                                },
+                            ),
+                            width=4,
+                        ),
+                    ]
+                ),
+                dbc.Progress(
+                    value=pct,
+                    label=f"{p.current_count} / {p.fixation_count}",
+                    style={"height": "16px", "marginTop": "10px", "marginBottom": "8px"},
+                    color="warning",
+                ),
+                dbc.Row(
+                    [
+                        dbc.Col(
+                            dbc.Input(
+                                id={"type": "ap-pos-count-input", "pos_id": p.id},
+                                type="number",
+                                min=0,
+                                max=p.fixation_count,
+                                step=1,
+                                value=p.current_count,
+                                style={
+                                    "backgroundColor": "#0f1923",
+                                    "color": _TEXT,
+                                    "fontSize": "12px",
+                                    "border": f"1px solid {_BORDER}",
+                                },
+                            ),
+                            width=2,
+                        ),
+                        dbc.Col(
+                            html.Span(
+                                f"/ {p.fixation_count} кейсов",
+                                style={"color": _MUTED, "fontSize": "12px", "lineHeight": "38px"},
+                            ),
+                            width=2,
+                        ),
+                        dbc.Col(
+                            dbc.Button(
+                                [html.I(className="fa fa-save me-1"), "Сохранить"],
+                                id={"type": "ap-pos-save", "pos_id": p.id},
+                                size="sm",
+                                color="success",
+                                outline=True,
+                                n_clicks=0,
+                                style={"fontSize": "11px"},
+                            ),
+                            width="auto",
+                        ),
+                        dbc.Col(
+                            dbc.Button(
+                                [html.I(className="fa fa-refresh me-1"), "Сбросить"],
+                                id={"type": "ap-pos-reset", "pos_id": p.id},
+                                size="sm",
+                                color="secondary",
+                                outline=True,
+                                n_clicks=0,
+                                style={"fontSize": "11px"},
+                            ),
+                            width="auto",
+                        ),
+                        dbc.Col(
+                            html.Div(
+                                id={"type": "ap-pos-status", "pos_id": p.id},
+                                style={"fontSize": "11px", "lineHeight": "38px"},
+                            ),
+                            width=True,
+                        ),
+                    ],
+                    className="align-items-center g-2",
+                ),
+                html.Div(
+                    html.Span(
+                        f"Чистыми: {int(net_per_unit):,} ₸/шт.  ·  "
+                        f"Итого {p.current_count} шт.: {int(net_total):,} ₸",
+                        style={"color": profit_color, "fontSize": "11px"},
+                    )
+                    if net_per_unit is not None else html.Span(),
+                    style={"marginTop": "6px"},
+                ),
+            ],
+            style={"padding": "10px 14px"},
+        ),
+        style={
+            "backgroundColor": "#1a2433",
+            "borderLeft": f"3px solid {_GOLD}",
+            "border": f"1px solid {_BORDER}",
+            "marginBottom": "8px",
+        },
+    )
+
+
+def _render_armorypass_section(
+    positions_with_price: list,
+    armory_store: dict,
+    containers,
+) -> html.Div:
+    """Armory Pass position tracker — placed right after the AP calculator."""
+    _ap = armory_store or {}
+    selected_name = _ap.get("container")
+
+    # Resolve container_id from selected name for the create button
+    cid_by_name = {str(c.container_name): str(c.container_id) for c in containers}
+    selected_cid = cid_by_name.get(selected_name) if selected_name else None
+
+    children: list = [
+        html.Div(
+            "ARMORY PASS — ПОЗИЦИИ",
+            style={
+                "color": _MUTED,
+                "fontSize": "10px",
+                "letterSpacing": "1.5px",
+                "textTransform": "uppercase",
+                "fontWeight": "600",
+                "margin": "16px 0 8px",
+            },
+        ),
+        dbc.Row(
+            [
+                dbc.Col(
+                    dbc.Button(
+                        [html.I(className="fa fa-star me-1"), "Создать AP позицию"],
+                        id="btn-create-ap-position",
+                        size="sm",
+                        color="warning",
+                        outline=True,
+                        n_clicks=0,
+                        disabled=not bool(selected_cid and _ap.get("pass_cost")),
+                        style={"fontSize": "11px"},
+                    ),
+                    width="auto",
+                ),
+                dbc.Col(
+                    html.Div(
+                        id="ap-pos-create-status",
+                        style={"fontSize": "11px", "color": _MUTED, "lineHeight": "32px"},
+                    ),
+                    width=True,
+                ),
+            ],
+            className="align-items-center mb-2 g-2",
+        ),
+    ]
+
+    if not positions_with_price:
+        children.append(
+            html.Div(
+                "Нет активных AP позиций. Выбери контейнер в калькуляторе выше и нажми «Создать AP позицию».",
+                style={"color": _MUTED, "fontSize": "12px", "fontStyle": "italic"},
+            )
+        )
+    else:
+        children.extend([_armorypass_card(p, cp) for p, cp in positions_with_price])
+
+    return html.Div(children)
 
 
 def _pfrow(label: str, value: str, sub: str = "", color: str = _TEXT) -> html.Div:
@@ -147,6 +517,15 @@ def _render_portfolio(
             invest_signals=invest_signals,
             positions_map=positions_map,
         )
+
+    # ── Load investment positions ─────────────────────────────────────────────
+    _pos_session = SessionLocal()
+    try:
+        flip_positions    = _get_positions_with_price(_pos_session, InvestmentPositionType.flip)
+        invest_positions  = _get_positions_with_price(_pos_session, InvestmentPositionType.investment)
+        armorypass_positions = _get_positions_with_price(_pos_session, InvestmentPositionType.armorypass)
+    finally:
+        _pos_session.close()
 
     def _fmt_amount(v: float) -> str:
         return f"{int(v):,} {settings.currency_symbol}"
@@ -506,7 +885,7 @@ def _render_portfolio(
             },
         )
 
-        alt_flips = plan["top_flips"][1:4]
+        alt_flips = plan["top_flips"][1:5]
         alt_els = []
         if alt_flips:
             alt_els = [
@@ -522,11 +901,32 @@ def _render_portfolio(
                 for a in alt_flips
             ]
 
+        flip_actions = html.Div(
+            [
+                dbc.Button(
+                    [html.I(className="fa fa-eye me-1"), "Контрольная проверка"],
+                    id={"type": "btn-control-check", "position_type": "flip"},
+                    size="sm", color="info", outline=True, n_clicks=0,
+                    style={"fontSize": "11px", "marginRight": "6px"},
+                ),
+                dbc.Button(
+                    [html.I(className="fa fa-plus me-1"), "Создать позицию"],
+                    id="btn-create-flip-position",
+                    size="sm", color="success", outline=True, n_clicks=0,
+                    style={"fontSize": "11px"},
+                ),
+                html.Div(id="control-check-flip-output", style={"marginTop": "6px"}),
+            ],
+            style={"marginTop": "8px", "marginBottom": "8px"},
+        )
+
         flip_section = html.Div(
             [
                 flip_header,
                 flip_card,
-                html.Div(alt_els, style={"paddingLeft": "8px", "marginBottom": "16px"}),
+                flip_actions,
+                html.Div(alt_els, style={"paddingLeft": "8px", "marginBottom": "8px"}),
+                _render_positions_section(flip_positions, f"Ваши флип-позиции · {len(flip_positions)}"),
             ]
         )
 
@@ -650,7 +1050,7 @@ def _render_portfolio(
             },
         )
 
-        alt_invs = plan["top_invests"][1:4]
+        alt_invs = plan["top_invests"][1:5]
         alt_inv_els = []
         if alt_invs:
             alt_inv_els = [
@@ -666,11 +1066,32 @@ def _render_portfolio(
                 for a in alt_invs
             ]
 
+        invest_actions = html.Div(
+            [
+                dbc.Button(
+                    [html.I(className="fa fa-eye me-1"), "Контрольная проверка"],
+                    id={"type": "btn-control-check", "position_type": "invest"},
+                    size="sm", color="info", outline=True, n_clicks=0,
+                    style={"fontSize": "11px", "marginRight": "6px"},
+                ),
+                dbc.Button(
+                    [html.I(className="fa fa-plus me-1"), "Создать позицию"],
+                    id="btn-create-invest-position",
+                    size="sm", color="success", outline=True, n_clicks=0,
+                    style={"fontSize": "11px"},
+                ),
+                html.Div(id="control-check-invest-output", style={"marginTop": "6px"}),
+            ],
+            style={"marginTop": "8px", "marginBottom": "8px"},
+        )
+
         inv_section = html.Div(
             [
                 inv_header,
                 invest_card,
-                html.Div(alt_inv_els, style={"paddingLeft": "8px", "marginBottom": "16px"}),
+                invest_actions,
+                html.Div(alt_inv_els, style={"paddingLeft": "8px", "marginBottom": "8px"}),
+                _render_positions_section(invest_positions, f"Ваши инвест-позиции · {len(invest_positions)}"),
             ]
         )
 
@@ -836,6 +1257,11 @@ def _render_portfolio(
         style={"backgroundColor": _BG2, "border": f"1px solid {_BORDER}", "marginBottom": "16px"},
     )
     sections.append(armory_section)
+
+    # ── Armory Pass positions ─────────────────────────────────────────────────
+    sections.append(
+        _render_armorypass_section(armorypass_positions, _ap, containers)
+    )
 
     # ── Correlation warning (M-06) ────────────────────────────────────────────
     corr_warn = plan.get("correlation_warning")

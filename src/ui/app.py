@@ -28,7 +28,7 @@ from ui.helpers import (
 
 logger = logging.getLogger(__name__)
 
-_VERSION = "2.4.4"  # bump this to confirm new code is running
+_VERSION = "2.5.2"  # bump this to confirm new code is running
 
 # ─── Design token aliases (kept here for layout code) ──────────────────────────
 _BG_WARN = "#3d2b00"  # stale calendar warning background (not in theme)
@@ -211,6 +211,7 @@ def create_dash_app() -> dash.Dash:
                                 },
                             ),
                             # Stores
+                            dcc.Store(id="position-modal-store", data={}),
                             dcc.Store(id="armory-pass-store", data={}),
                             dcc.Store(id="selected-cid", data=default_id),
                             dcc.Store(id="invest-store", data={}),
@@ -218,6 +219,7 @@ def create_dash_app() -> dash.Dash:
                             dcc.Store(id="inventory-store", data=None),
                             dcc.Store(id="portfolio-balance", data=None),
                             dcc.Store(id="balance-refresh-store", data=0),
+                            dcc.Store(id="tx-page-store", data=1),
                             dcc.Store(id="price-count-store", data=None),
                             dcc.Store(id="task-done-ts", data=None),
                             dcc.Interval(
@@ -510,6 +512,72 @@ def create_dash_app() -> dash.Dash:
                     ]),
                 ],
             ),
+        # ── Position create modal ─────────────────────────────────────────────
+        dbc.Modal(
+            id="position-create-modal",
+            is_open=False,
+            size="lg",
+            children=[
+                dbc.ModalHeader(dbc.ModalTitle(id="position-modal-title", children="Создать позицию")),
+                dbc.ModalBody([
+                    html.Div(id="position-modal-container-name",
+                             style={"color": _GOLD, "fontWeight": "bold", "fontSize": "14px", "marginBottom": "12px"}),
+                    dbc.Row([
+                        dbc.Col([
+                            dbc.Label("Тип", style={"fontSize": "11px", "color": _MUTED}),
+                            dbc.Select(
+                                id="pos-type-select",
+                                options=[{"label": "Флип", "value": "flip"},
+                                         {"label": "Инвестиция", "value": "investment"}],
+                                value="flip",
+                            ),
+                        ], md=4),
+                        dbc.Col([
+                            dbc.Label("Кол-во (fixation)", style={"fontSize": "11px", "color": _MUTED}),
+                            dbc.Input(id="pos-fixation-input", type="number", min=1, step=1, value=5),
+                        ], md=4),
+                        dbc.Col([
+                            dbc.Label("Цена покупки (₸)", style={"fontSize": "11px", "color": _MUTED}),
+                            dbc.Input(id="pos-buy-input", type="number", min=0, step=1),
+                        ], md=4),
+                    ], className="mb-3"),
+                    dbc.Row([
+                        dbc.Col([
+                            dbc.Label("Цель продажи (₸)", style={"fontSize": "11px", "color": _MUTED}),
+                            dbc.Input(id="pos-target-input", type="number", min=0, step=1),
+                        ], md=6),
+                        dbc.Col([
+                            dbc.Label("Прогноз прибыли", style={"fontSize": "11px", "color": _MUTED}),
+                            html.Div(id="pos-profit-preview",
+                                     style={"fontFamily": "monospace", "fontSize": "18px",
+                                            "fontWeight": "bold", "paddingTop": "6px"}),
+                        ], md=6),
+                    ], className="mb-2"),
+                    html.Div(
+                        "(target / 1.15 − 5) × N − buy × N",
+                        style={"color": _MUTED, "fontSize": "10px", "fontStyle": "italic"},
+                    ),
+                    html.Div(id="position-modal-status", className="mt-2 text-danger", style={"fontSize": "12px"}),
+                ]),
+                dbc.ModalFooter([
+                    dbc.Button("Отмена", id="pos-cancel-btn", color="secondary", n_clicks=0),
+                    dbc.Button("Создать позицию", id="pos-submit-btn", color="success", n_clicks=0),
+                ]),
+            ],
+        ),
+        # ── Group detail modal ────────────────────────────────────────────────
+        dbc.Modal(
+            id="group-detail-modal",
+            is_open=False,
+            size="lg",
+            children=[
+                dbc.ModalHeader(dbc.ModalTitle(id="group-detail-title")),
+                dbc.ModalBody(html.Div(id="group-detail-body")),
+                dbc.ModalFooter(
+                    dbc.Button("Закрыть", id="group-detail-close-btn", color="secondary", n_clicks=0)
+                ),
+            ],
+        ),
         ],
     )
 

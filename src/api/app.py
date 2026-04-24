@@ -12,6 +12,7 @@ from src.api.routes import (
     containers_router,
     items_router,
     metrics_router,
+    positions_router,
     scrape_sessions_router,
     stats_router,
     sync_router,
@@ -52,7 +53,7 @@ def create_app(lifespan: Any = None) -> FastAPI:
         CORSMiddleware,
         allow_origins=_ALLOWED_ORIGINS,
         allow_credentials=False,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE"],
         allow_headers=["Content-Type"],
     )
 
@@ -81,6 +82,7 @@ def create_app(lifespan: Any = None) -> FastAPI:
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(containers_router, prefix="/api/v1")
     app.include_router(items_router, prefix="/api/v1")
+    app.include_router(positions_router, prefix="/api/v1")
     app.include_router(stats_router, prefix="/api/v1")
     app.include_router(sync_router, prefix="/api/v1")
     app.include_router(system_router, prefix="/api/v1")

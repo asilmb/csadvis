@@ -10,7 +10,9 @@ Tables:
   dim_annual_summary       — yearly P&L summary (manual input)
   event_log                — domain event audit log (PV-17)
   positions                — inventory position ledger with asset_id (PV-31)
-  dim_deals                — flip trade lifecycle tracker (entry → unlock → sold/stopped)
+  transaction_groups       — grouped Steam transactions (BUY/SELL clusters)
+  investment_positions     — flip/invest lifecycle positions
+  position_transaction_groups — M2M: position ↔ transaction_group
   dim_banned_assets        — dead assets excluded from future scans
 """
 
@@ -135,6 +137,9 @@ class FactTransaction(Base):
     pnl = Column(Float, nullable=True)  # P&L for this trade (SELL only)
     listing_id = Column(String(64), nullable=True, index=True)  # Steam listing ID for dedup
     notes = Column(String(500), nullable=True)
+    transaction_group_id = Column(
+        String(36), ForeignKey("transaction_groups.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     def __repr__(self) -> str:
         return f"<Transaction {self.trade_date.date()} {self.action} {self.item_name}>"
@@ -198,49 +203,6 @@ class FactInvestmentSignal(Base):
 
     def __repr__(self) -> str:
         return f"<FactInvestmentSignal {self.container_id} {self.verdict} @ {self.computed_at}>"
-
-
-# ─── Deal tracking ────────────────────────────────────────────────────────────
-
-
-class DealStatus(StrEnum):
-    LOCKED = "LOCKED"
-    ACTIVE = "ACTIVE"
-    SOLD = "SOLD"
-    STOPPED = "STOPPED"
-
-
-class DimDeal(Base):
-    """Flip trade lifecycle — from purchase through Steam trade ban to sale or stop-loss."""
-
-    __tablename__ = "dim_deals"
-
-    deal_id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    container_id = Column(String(36), ForeignKey("dim_containers.container_id"), nullable=False)
-    entry_price = Column(Float, nullable=False)        # price paid per unit
-    entry_date = Column(DateTime, nullable=False)      # when purchased
-    unlock_date = Column(DateTime, nullable=False)     # entry_date + 7 days (Steam trade ban)
-    qty = Column(Integer, nullable=False)              # units purchased
-    sell_target = Column(Float, nullable=False)        # entry_price × 1.21 (4-5% net after Steam 15% fee)
-    stop_loss = Column(Float, nullable=False)          # entry_price × 0.92 (accept -8% max loss)
-    status = Column(
-        Enum(DealStatus), nullable=False, default=DealStatus.LOCKED, index=True
-    )
-    created_at = Column(
-        DateTime,
-        nullable=False,
-        default=lambda: datetime.now(UTC).replace(tzinfo=None),
-    )
-    closed_at = Column(DateTime, nullable=True)        # set when SOLD or STOPPED
-    closed_price = Column(Float, nullable=True)        # actual sell price
-
-    container = relationship("DimContainer")
-
-    def __repr__(self) -> str:
-        return (
-            f"<DimDeal {self.deal_id} container={self.container_id}"
-            f" x{self.qty} @ {self.entry_price:.0f} [{self.status}]>"
-        )
 
 
 class DimBannedAsset(Base):
@@ -453,6 +415,120 @@ class Position(Base):
         Does NOT flush or commit — caller owns the transaction.
         """
         self.is_on_market = 0
+
+
+# ─── Transaction groups & investment positions ────────────────────────────────
+
+
+class TransactionDirection(StrEnum):
+    BUY = "BUY"
+    SELL = "SELL"
+
+
+class InvestmentPositionType(StrEnum):
+    flip = "flip"
+    investment = "investment"
+    armorypass = "armorypass"
+
+
+class InvestmentPositionStatus(StrEnum):
+    hold = "hold"
+    on_sale = "on_sale"
+    sold = "sold"
+
+
+class LinkStatus(StrEnum):
+    undefined = "undefined"
+    defined = "defined"
+    skipped = "skipped"
+
+
+class TransactionGroup(Base):
+    """Cluster of Steam transactions with matching item, direction, price bucket and time window."""
+
+    __tablename__ = "transaction_groups"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String(300), nullable=False)
+    direction = Column(Enum(TransactionDirection), nullable=False)
+    item_name = Column(String(200), nullable=False, index=True)
+    container_id = Column(
+        String(36), ForeignKey("dim_containers.container_id", ondelete="SET NULL"), nullable=True
+    )
+    count = Column(Integer, nullable=False)
+    price = Column(Float, nullable=False)          # average price across the group
+    date_from = Column(DateTime, nullable=False)
+    date_to = Column(DateTime, nullable=False)
+    trade_ban_expires_at = Column(DateTime, nullable=True)  # max(date_to) + 7d for BUY groups
+    created_at = Column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC).replace(tzinfo=None)
+    )
+
+    container = relationship("DimContainer")
+    transactions = relationship("FactTransaction", foreign_keys="FactTransaction.transaction_group_id")
+
+    def __repr__(self) -> str:
+        return f"<TransactionGroup {self.direction} {self.item_name} ×{self.count} @ {self.price:.0f}>"
+
+
+class InvestmentPosition(Base):
+    """Flip or investment position lifecycle tracker."""
+
+    __tablename__ = "investment_positions"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String(300), nullable=False)
+    container_id = Column(
+        String(36), ForeignKey("dim_containers.container_id"), nullable=False, index=True
+    )
+    position_type = Column(Enum(InvestmentPositionType), nullable=False)
+    fixation_count = Column(Integer, nullable=False)   # immutable, set at creation
+    current_count = Column(Integer, nullable=False)    # decreases as SELL groups are linked
+    buy_price = Column(Float, nullable=False)          # immutable
+    sale_target_price = Column(Float, nullable=False)
+    status = Column(
+        Enum(InvestmentPositionStatus),
+        nullable=False,
+        default=InvestmentPositionStatus.hold,
+        index=True,
+    )
+    opened_at = Column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC).replace(tzinfo=None)
+    )
+    closed_at = Column(DateTime, nullable=True)
+    balance_influence = Column(Float, nullable=True)   # actual result after closing
+
+    container = relationship("DimContainer")
+
+    def __repr__(self) -> str:
+        return (
+            f"<InvestmentPosition {self.name!r} {self.position_type}"
+            f" {self.current_count}/{self.fixation_count} [{self.status}]>"
+        )
+
+
+class PositionTransactionGroup(Base):
+    """M2M link between InvestmentPosition and TransactionGroup."""
+
+    __tablename__ = "position_transaction_groups"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    position_id = Column(
+        String(36), ForeignKey("investment_positions.id", ondelete="SET NULL"), nullable=True
+    )
+    transaction_group_id = Column(
+        String(36), ForeignKey("transaction_groups.id"), nullable=False, unique=True
+    )
+    link_status = Column(
+        Enum(LinkStatus), nullable=False, default=LinkStatus.undefined, index=True
+    )
+    linked_at = Column(DateTime, nullable=True)
+
+    position = relationship("InvestmentPosition")
+    transaction_group = relationship("TransactionGroup")
+
+    def __repr__(self) -> str:
+        return f"<PositionTransactionGroup pos={self.position_id} grp={self.transaction_group_id} [{self.link_status}]>"
 
 
 class SystemSettings(Base):

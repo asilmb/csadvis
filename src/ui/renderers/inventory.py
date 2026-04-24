@@ -27,6 +27,7 @@ from ui.helpers import (
     _get_current_steam_prices,
     _kpi_card,
 )
+from ui.url_generator import get_market_url
 
 # ── Inventory filtering policy ──────────────────────────────────────────────
 # Centralised here so adding a new asset class (e.g. "package") is a one-liner.
@@ -52,16 +53,24 @@ class InventoryPolicy:
         "package",
     )
 
-    def is_in_scope(self, item_type: str, in_db: bool) -> bool:
+    def is_in_scope(self, item_type: str, in_db: bool, name: str = "") -> bool:
         if in_db:
             return True
-        return any(kw in item_type.lower() for kw in self.SCOPE_KEYWORDS)
+        # Check both the Steam `type` field AND the market_hash_name so that
+        # trade-banned cases (marketable=0) whose `type` might be ambiguous
+        # are still recognised as in-scope by their name, e.g. "Fever Dream Case".
+        haystack = f"{item_type} {name}".lower()
+        return any(kw in haystack for kw in self.SCOPE_KEYWORDS)
 
     def should_show(self, item: dict, show_all: bool) -> bool:
         """Return True if the row should appear in the table."""
         if show_all:
             return True
-        return item["in_scope"] or (item["marketable"] and item["price"] > 0)
+        # Always show in-scope items regardless of marketable/price status —
+        # trade-banned cases still need to be visible for position creation.
+        if item["in_scope"]:
+            return True
+        return item["marketable"] and item["price"] > 0
 
 
 _POLICY = InventoryPolicy()
@@ -96,7 +105,7 @@ def _render_inventory(
         item_type = item.get("item_type", "")
 
         cid = name_to_cid.get(name)
-        in_scope = _POLICY.is_in_scope(item_type, cid is not None)
+        in_scope = _POLICY.is_in_scope(item_type, cid is not None, name=name)
 
         pd = price_data.get(name, {})
         steam_price = pd.get("current_price")
@@ -249,7 +258,19 @@ def _render_inventory(
             html.Tr(
                 [
                     html.Td(
-                        html.Span(item["name"], style={"color": _TEXT, "fontSize": "12px"}),
+                        html.Span(
+                            [
+                                html.Span(item["name"], style={"color": _TEXT, "fontSize": "12px"}),
+                                html.A(
+                                    html.I(className="fa fa-external-link"),
+                                    href=get_market_url(item["name"]),
+                                    target="_blank",
+                                    rel="noopener noreferrer",
+                                    title="Steam Market",
+                                    style={"color": _MUTED, "fontSize": "10px", "marginLeft": "6px", "verticalAlign": "middle"},
+                                ),
+                            ]
+                        ),
                         style={
                             **_td,
                             "maxWidth": "340px",

@@ -72,10 +72,10 @@ def _get_latest_ts_map() -> dict:
     return _latest_ts_cache
 
 
-def _render_balance_tab(wallet_balance: Any, inventory_data: Any) -> html.Div:
+def _render_balance_tab(wallet_balance: Any, inventory_data: Any, page: int = 1) -> html.Div:
     from ui.balance import render_balance
 
-    return render_balance(wallet_balance, inventory_data)
+    return render_balance(wallet_balance, inventory_data, page=page)
 
 
 def _get_system_health():
@@ -705,6 +705,7 @@ def register_callbacks(app: Any) -> None:
         Input("price-count-store", "data"),
         Input("inventory-show-all", "value"),
         Input("armory-pass-store", "data"),
+        State("tx-page-store", "data"),
     )
     def render_tab(
         tab: Any,
@@ -717,6 +718,7 @@ def register_callbacks(app: Any) -> None:
         price_count: Any,
         show_all_inventory: Any,
         armory_store: Any,
+        tx_page: Any,
     ) -> Any:
         invest = invest or {}
         raw_items = raw_items or []
@@ -785,7 +787,7 @@ def register_callbacks(app: Any) -> None:
         if tab == "portfolio":
             return _wrap(_safe(_render_portfolio, portfolio_balance, inventory_data, invest, armory_store or {}))
         if tab == "balance":
-            return _wrap(_safe(_render_balance_tab, portfolio_balance, inventory_data))
+            return _wrap(_safe(_render_balance_tab, portfolio_balance, inventory_data, page=int(tx_page or 1)))
         if tab == "analytics":
             return _wrap(_safe(_render_analytics, selected_container_id=container_id))
         if tab == "system":
@@ -806,6 +808,34 @@ def register_callbacks(app: Any) -> None:
             raise dash.exceptions.PreventUpdate
         from ui.renderers.system_status import render_system_status
         return render_system_status(health=_get_system_health())
+
+    # ── Tx pagination: prev / next page ──────────────────────────────────────
+    @app.callback(
+        Output("tx-page-store", "data"),
+        Input("tx-prev-btn", "n_clicks"),
+        Input("tx-next-btn", "n_clicks"),
+        State("tx-page-store", "data"),
+        prevent_initial_call=True,
+    )
+    def update_tx_page(prev_n: Any, next_n: Any, current: Any) -> int:
+        tid = callback_context.triggered[0]["prop_id"].rsplit(".", 1)[0]
+        page = int(current or 1)
+        if tid == "tx-prev-btn":
+            return max(1, page - 1)
+        return page + 1
+
+    @app.callback(
+        Output("tab-content", "children", allow_duplicate=True),
+        Input("tx-page-store", "data"),
+        State("main-tabs", "value"),
+        State("portfolio-balance", "data"),
+        State("inventory-store", "data"),
+        prevent_initial_call=True,
+    )
+    def render_tx_page(page: Any, tab: Any, portfolio_balance: Any, inventory_data: Any) -> Any:
+        if tab != "balance":
+            raise dash.exceptions.PreventUpdate
+        return _render_balance_tab(portfolio_balance, inventory_data, page=int(page or 1))
 
     # ── Worker progress: live poll while worker is busy ───────────────────────
     @app.callback(
@@ -2008,3 +2038,369 @@ def _register_cookie_callbacks(app: dash.Dash) -> None:
                 return True, f"Ошибка: {err}"
         except Exception as exc:
             return True, f"Ошибка подключения: {exc}"
+
+    # ── Position modal: open from Portfolio buttons ───────────────────────────
+
+    @app.callback(
+        Output("position-create-modal", "is_open"),
+        Output("position-modal-store", "data"),
+        Output("position-modal-title", "children"),
+        Output("position-modal-container-name", "children"),
+        Output("pos-buy-input", "value"),
+        Output("pos-target-input", "value"),
+        Output("pos-type-select", "value"),
+        Output("pos-fixation-input", "value"),
+        Input("btn-create-flip-position", "n_clicks"),
+        Input("btn-create-invest-position", "n_clicks"),
+        Input("pos-cancel-btn", "n_clicks"),
+        Input("pos-submit-btn", "n_clicks"),
+        State("position-modal-store", "data"),
+        State("invest-store", "data"),
+        State("selected-cid", "data"),
+        prevent_initial_call=True,
+    )
+    def toggle_position_modal(
+        flip_clicks, invest_clicks, cancel_clicks, submit_clicks,
+        modal_data, invest_store, selected_cid,
+    ):
+        ctx = callback_context
+        if not ctx.triggered:
+            raise dash.exceptions.PreventUpdate
+        tid = ctx.triggered[0]["prop_id"].split(".")[0]
+
+        if tid in ("pos-cancel-btn", "pos-submit-btn"):
+            return False, {}, "Создать позицию", "", no_update, no_update, "flip", 5
+
+        # Determine position type from button
+        pos_type = "flip" if tid == "btn-create-flip-position" else "investment"
+        sig = invest_store.get(selected_cid or "", {}) if invest_store else {}
+        from ui.helpers import _get_containers
+        containers = _get_containers()
+        cname = next((c.container_name for c in containers if str(c.container_id) == str(selected_cid or "")), "")
+
+        # Pre-fill from invest signal if available
+        buy_price = sig.get("buy_target") or sig.get("current_price") or ""
+        sell_price = sig.get("sell_target") or ""
+        label = "Создать ФЛИП-позицию" if pos_type == "flip" else "Создать ИНВЕСТ-позицию"
+
+        store = {
+            "container_id": selected_cid,
+            "container_name": cname,
+            "position_type": pos_type,
+            "buy_price": buy_price,
+            "sale_target_price": sell_price,
+        }
+        return True, store, label, cname, buy_price, sell_price, pos_type, 5
+
+    @app.callback(
+        Output("pos-profit-preview", "children"),
+        Output("pos-profit-preview", "style"),
+        Input("pos-buy-input", "value"),
+        Input("pos-target-input", "value"),
+        Input("pos-fixation-input", "value"),
+        prevent_initial_call=True,
+    )
+    def update_profit_preview(buy_price, target_price, fixation_count):
+        """Live profit estimate: (target / 1.15 − 5) × N − buy × N."""
+        base_style = {"fontFamily": "monospace", "fontSize": "18px", "fontWeight": "bold", "paddingTop": "6px"}
+        try:
+            b = float(buy_price or 0)
+            t = float(target_price or 0)
+            n = int(fixation_count or 1)
+            if b <= 0 or t <= 0 or n < 1:
+                return "—", {**base_style, "color": _MUTED}
+            profit = (t / 1.15 - 5) * n - b * n
+            color = _GREEN if profit >= 0 else _RED
+            sign = "+" if profit >= 0 else ""
+            return f"{sign}{int(profit):,} ₸", {**base_style, "color": color}
+        except (TypeError, ValueError):
+            return "—", {**base_style, "color": _MUTED}
+
+    @app.callback(
+        Output("position-create-modal", "is_open", allow_duplicate=True),
+        Output("position-modal-status", "children"),
+        Input("pos-submit-btn", "n_clicks"),
+        State("position-modal-store", "data"),
+        State("pos-type-select", "value"),
+        State("pos-buy-input", "value"),
+        State("pos-target-input", "value"),
+        State("pos-fixation-input", "value"),
+        prevent_initial_call=True,
+    )
+    def submit_position(n_clicks, store_data, pos_type, buy_price, target_price, fixation_count):
+        if not n_clicks:
+            raise dash.exceptions.PreventUpdate
+        try:
+            import requests as _req
+            resp = _req.post(
+                f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/positions",
+                json={
+                    "container_id": store_data.get("container_id"),
+                    "position_type": pos_type,
+                    "buy_price": float(buy_price or 0),
+                    "fixation_count": int(fixation_count or 1),
+                    "sale_target_price": float(target_price or 0),
+                },
+                timeout=10,
+            )
+            if resp.status_code == 201:
+                return False, ""
+            return no_update, f"Ошибка: {resp.json().get('detail', resp.text)}"
+        except Exception as exc:
+            return no_update, f"Ошибка подключения: {exc}"
+
+    # ── Control-check: inline price verification ──────────────────────────────
+
+    @app.callback(
+        Output("control-check-flip-output", "children"),
+        Input({"type": "btn-control-check", "position_type": "flip"}, "n_clicks"),
+        State("selected-cid", "data"),
+        State("invest-store", "data"),
+        prevent_initial_call=True,
+    )
+    def control_check_flip(n_clicks, selected_cid, invest_store):
+        if not n_clicks:
+            raise dash.exceptions.PreventUpdate
+        return _run_control_check(selected_cid, invest_store)
+
+    @app.callback(
+        Output("control-check-invest-output", "children"),
+        Input({"type": "btn-control-check", "position_type": "invest"}, "n_clicks"),
+        State("selected-cid", "data"),
+        State("invest-store", "data"),
+        prevent_initial_call=True,
+    )
+    def control_check_invest(n_clicks, selected_cid, invest_store):
+        if not n_clicks:
+            raise dash.exceptions.PreventUpdate
+        return _run_control_check(selected_cid, invest_store)
+
+    # ── Skip group ────────────────────────────────────────────────────────────
+
+    @app.callback(
+        Output("balance-refresh-store", "data", allow_duplicate=True),
+        Input({"type": "btn-grp-skip", "group_id": ALL}, "n_clicks"),
+        State("balance-refresh-store", "data"),
+        prevent_initial_call=True,
+    )
+    def skip_group_btn(n_clicks_list, refresh_count):
+        ctx = callback_context
+        if not any(n_clicks_list):
+            raise dash.exceptions.PreventUpdate
+        try:
+            import json as _j, requests as _req
+            tid = ctx.triggered[0]["prop_id"].rsplit(".", 1)[0]
+            group_id = _j.loads(tid)["group_id"]
+            _req.patch(
+                f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/positions/groups/{group_id}/skip",
+                timeout=5,
+            )
+        except Exception as exc:
+            logger.warning("skip_group_btn: %s", exc)
+        return (refresh_count or 0) + 1
+
+    # ── Group detail modal ────────────────────────────────────────────────────
+
+    @app.callback(
+        Output("group-detail-modal", "is_open"),
+        Output("group-detail-title", "children"),
+        Output("group-detail-body", "children"),
+        Input({"type": "btn-grp-create", "group_id": ALL}, "n_clicks"),
+        Input("group-detail-close-btn", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def open_group_detail(create_clicks, close_clicks):
+        ctx = callback_context
+        tid = ctx.triggered[0]["prop_id"].rsplit(".", 1)[0]
+        if tid == "group-detail-close-btn":
+            return False, no_update, no_update
+        if not any(create_clicks):
+            raise dash.exceptions.PreventUpdate
+        try:
+            import json as _j, requests as _req
+            group_id = _j.loads(tid)["group_id"]
+            resp = _req.get(
+                f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/positions/groups",
+                params={"link_status": "undefined"},
+                timeout=5,
+            )
+            groups = resp.json()
+            g = next((x for x in groups if x["id"] == group_id), None)
+            if not g:
+                return False, no_update, no_update
+            title = f"{g['direction']} · {g['item_name']} · ×{g['count']} · {int(g['price']):,} ₸"
+            body = html.Div([
+                html.P(f"Диапазон: {g['date_from'][:16]} — {g['date_to'][:16]}",
+                       style={"color": _MUTED, "fontSize": "12px"}),
+                html.P(f"Транзакций: {g['count']} шт. · средняя цена: {int(g['price']):,} ₸",
+                       style={"fontSize": "13px"}),
+            ])
+            return True, title, body
+        except Exception as exc:
+            logger.warning("open_group_detail: %s", exc)
+            raise dash.exceptions.PreventUpdate
+
+    # ── Armory Pass position: save progress ──────────────────────────────────
+    @app.callback(
+        Output({"type": "ap-pos-status", "pos_id": ALL}, "children"),
+        Input({"type": "ap-pos-save", "pos_id": ALL}, "n_clicks"),
+        State({"type": "ap-pos-count-input", "pos_id": ALL}, "value"),
+        State({"type": "ap-pos-save", "pos_id": ALL}, "id"),
+        prevent_initial_call=True,
+    )
+    def save_ap_progress(n_clicks_list: Any, count_values: Any, ids: Any) -> list:
+        ctx = callback_context
+        if not ctx.triggered or not any(n for n in (n_clicks_list or [])):
+            raise dash.exceptions.PreventUpdate
+        tid_raw = ctx.triggered[0]["prop_id"].rsplit(".", 1)[0]
+        try:
+            triggered_id = _json.loads(tid_raw)
+        except Exception:
+            raise dash.exceptions.PreventUpdate
+
+        results = [no_update] * len(ids)
+        for i, btn_id in enumerate(ids or []):
+            if btn_id.get("pos_id") != triggered_id.get("pos_id"):
+                continue
+            count = count_values[i] if count_values else 0
+            try:
+                import requests as _req
+                _req.patch(
+                    f"http://{_settings.api_internal_host}:{_settings.api_port}"
+                    f"/api/v1/positions/{btn_id['pos_id']}/progress",
+                    json={"current_count": int(count or 0)},
+                    timeout=5,
+                )
+                results[i] = html.Span("✓ Сохранено", style={"color": _GREEN})
+            except Exception as exc:
+                results[i] = html.Span(f"Ошибка: {exc}", style={"color": _RED})
+        return results
+
+    # ── Armory Pass position: reset ───────────────────────────────────────────
+    @app.callback(
+        Output({"type": "ap-pos-status", "pos_id": ALL}, "children", allow_duplicate=True),
+        Input({"type": "ap-pos-reset", "pos_id": ALL}, "n_clicks"),
+        State({"type": "ap-pos-reset", "pos_id": ALL}, "id"),
+        prevent_initial_call=True,
+    )
+    def reset_ap_position(n_clicks_list: Any, ids: Any) -> list:
+        ctx = callback_context
+        if not ctx.triggered or not any(n for n in (n_clicks_list or [])):
+            raise dash.exceptions.PreventUpdate
+        tid_raw = ctx.triggered[0]["prop_id"].rsplit(".", 1)[0]
+        try:
+            triggered_id = _json.loads(tid_raw)
+        except Exception:
+            raise dash.exceptions.PreventUpdate
+
+        results = [no_update] * len(ids)
+        for i, btn_id in enumerate(ids or []):
+            if btn_id.get("pos_id") != triggered_id.get("pos_id"):
+                continue
+            try:
+                import requests as _req
+                _req.patch(
+                    f"http://{_settings.api_internal_host}:{_settings.api_port}"
+                    f"/api/v1/positions/{btn_id['pos_id']}/reset",
+                    timeout=5,
+                )
+                results[i] = html.Span("↺ Сброшено", style={"color": _MUTED})
+            except Exception as exc:
+                results[i] = html.Span(f"Ошибка: {exc}", style={"color": _RED})
+        return results
+
+    # ── Armory Pass position: create ──────────────────────────────────────────
+    @app.callback(
+        Output("ap-pos-create-status", "children"),
+        Input("btn-create-ap-position", "n_clicks"),
+        State("armory-pass-store", "data"),
+        State("selected-cid", "data"),
+        prevent_initial_call=True,
+    )
+    def create_ap_position(n: Any, ap_store: Any, selected_cid: Any) -> Any:
+        if not n:
+            raise dash.exceptions.PreventUpdate
+        _ap = ap_store or {}
+        pass_cost      = _ap.get("pass_cost")
+        stars_in_pass  = _ap.get("stars_in_pass", 5)
+        stars_per_case = _ap.get("stars_per_case", 1)
+        container      = _ap.get("container")
+
+        if not pass_cost or not container:
+            return html.Span("Сначала заполни калькулятор выше", style={"color": _ORANGE})
+
+        # Resolve container_id: prefer selected_cid if container names match
+        from src.domain.connection import SessionLocal as _SL
+        from src.domain.models import DimContainer as _DC
+        with _SL() as _db:
+            c = _db.query(_DC).filter(_DC.container_name == container).first()
+            if not c:
+                return html.Span(f"Контейнер «{container}» не найден в БД", style={"color": _RED})
+            cid = str(c.container_id)
+
+        try:
+            import requests as _req
+            resp = _req.post(
+                f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/positions/armorypass",
+                json={
+                    "container_id":   cid,
+                    "pass_cost":      float(pass_cost),
+                    "stars_in_pass":  int(stars_in_pass or 5),
+                    "stars_per_case": int(stars_per_case or 1),
+                },
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                d = resp.json()
+                return html.Span(
+                    f"✓ Создана: «{d['name']}» · {d['fixation_count']} кейсов",
+                    style={"color": _GREEN},
+                )
+            return html.Span(f"Ошибка {resp.status_code}: {resp.text[:80]}", style={"color": _RED})
+        except Exception as exc:
+            return html.Span(f"Ошибка: {exc}", style={"color": _RED})
+
+    # ── Wizard — open in new browser tab ─────────────────────────────────────
+    app.clientside_callback(
+        """
+        function(n_clicks) {
+            if (n_clicks && n_clicks > 0) {
+                window.open('/wizard', '_blank', 'noopener,noreferrer');
+            }
+            return window.dash_clientside.no_update;
+        }
+        """,
+        Output("btn-open-wizard", "data-wizard-opened"),
+        Input("btn-open-wizard", "n_clicks"),
+        prevent_initial_call=True,
+    )
+
+
+def _run_control_check(container_id: str | None, invest_store: dict | None) -> html.Div:
+    """Fetch current price from invest_store and compare to buy_target."""
+    if not container_id or not invest_store:
+        return html.Div("Нет данных.", style={"color": _MUTED, "fontSize": "12px"})
+    sig = invest_store.get(container_id, {})
+    current = sig.get("current_price")
+    buy_target = sig.get("buy_target") or sig.get("baseline_price")
+    if current is None:
+        return html.Div(
+            [html.I(className="fa fa-ban me-2", style={"color": _RED}),
+             html.Span("Нет актуальной цены. Запусти Sync Prices.", style={"color": _MUTED, "fontSize": "12px"})],
+            style={"display": "flex", "alignItems": "center", "padding": "6px 10px",
+                   "background": "#0f1923", "border": f"1px solid {_BORDER}", "borderRadius": "3px", "marginTop": "6px"},
+        )
+    ok = buy_target and current <= buy_target
+    icon_cls = "fa fa-check-circle" if ok else "fa fa-exclamation-triangle"
+    icon_color = _GREEN if ok else _ORANGE
+    text = (
+        f"{int(current):,} ₸  ≤  buy_target {int(buy_target):,} ₸ — можно покупать"
+        if ok
+        else f"{int(current):,} ₸  >  buy_target {int(buy_target or 0):,} ₸ — выше цели, рекомендуем подождать"
+    )
+    return html.Div(
+        [html.I(className=f"{icon_cls} me-2", style={"color": icon_color}),
+         html.Span(text, style={"fontSize": "12px"})],
+        style={"display": "flex", "alignItems": "center", "padding": "6px 10px",
+               "background": "#0f1923", "border": f"1px solid {_BORDER}", "borderRadius": "3px", "marginTop": "6px"},
+    )
