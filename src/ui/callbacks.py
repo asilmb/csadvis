@@ -1910,20 +1910,23 @@ def _register_cookie_callbacks(app: dash.Dash) -> None:
         if is_open:
             raise dash.exceptions.PreventUpdate
 
-        cookie_expired = False
+        should_open = False
         try:
             import requests
             resp = requests.get(
                 f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/system/cookie-status",
                 timeout=3,
             )
-            api_status = resp.json().get("status") if resp.ok else "ERROR"
-            cookie_expired = api_status == "EXPIRED"
-            logger.info("check_cookie_status: api_status=%r cookie_expired=%s", api_status, cookie_expired)
+            if resp.ok:
+                data = resp.json()
+                api_status = data.get("status", "UNKNOWN")
+                steam_id_missing = data.get("steam_id_missing", False)
+                should_open = api_status == "EXPIRED" or steam_id_missing
+                logger.info("check_cookie_status: status=%r steam_id_missing=%s open=%s", api_status, steam_id_missing, should_open)
         except Exception as exc:
             logger.warning("check_cookie_status: API unreachable — %s", exc)
 
-        return cookie_expired
+        return should_open
 
     @app.callback(
         Output("cookie-modal", "is_open", allow_duplicate=True),

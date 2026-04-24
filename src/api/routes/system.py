@@ -30,6 +30,7 @@ class CancelTaskRequest(BaseModel):
 
 class CookieStatusResponse(BaseModel):
     status: str  # VALID | EXPIRED | UNKNOWN
+    steam_id_missing: bool = False
 
 
 @router.get("/cookie-status", response_model=CookieStatusResponse)
@@ -38,7 +39,17 @@ def cookie_status_endpoint() -> CookieStatusResponse:
     from src.domain.sql_repositories import get_cookie_status
     with SessionLocal() as db:
         status = get_cookie_status(db)
-    return CookieStatusResponse(status=status)
+
+    steam_id_missing = False
+    try:
+        from infra.redis_client import get_redis as _get_redis
+        from config import settings as _settings
+        val = _get_redis().get("cs2:config:steam_id")
+        steam_id_missing = not (val or _settings.steam_id or "").strip()
+    except Exception:
+        pass
+
+    return CookieStatusResponse(status=status, steam_id_missing=steam_id_missing)
 
 
 @router.get("/queue-status")
