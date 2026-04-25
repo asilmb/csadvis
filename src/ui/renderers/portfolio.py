@@ -527,7 +527,7 @@ def _flip_candidate_card(c: dict, rank: int, show_create_btn: bool = False) -> d
             ]),
             *([dbc.Button(
                 [html.I(className="fa fa-plus me-1"), "Создать позицию"],
-                id="btn-create-flip-position",
+                id={"type": "btn-create-position", "index": "flip"},
                 size="sm", color="success", outline=True, n_clicks=0,
                 style={"fontSize": "10px", "marginTop": "8px", "width": "100%"},
             )] if show_create_btn else []),
@@ -579,10 +579,10 @@ def _invest_candidate_card(c: dict, rank: int, show_create_btn: bool = False) ->
             ]),
             *([dbc.Button(
                 [html.I(className="fa fa-plus me-1"), "Создать позицию"],
-                id="btn-create-invest-position",
+                id={"type": "btn-create-position", "index": "invest"},
                 size="sm", color="success", outline=True, n_clicks=0,
                 style={"fontSize": "10px", "marginTop": "8px", "width": "100%"},
-            )] if show_create_btn else []),
+            )] if show_create_btn else [])
         ], style={"padding": "10px"}),
         style={"backgroundColor": _BG2, "border": f"1px solid {border_col}", "height": "100%"},
     )

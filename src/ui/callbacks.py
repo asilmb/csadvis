@@ -2239,8 +2239,7 @@ def _register_cookie_callbacks(app: dash.Dash) -> None:
         Output("pos-target-input", "value"),
         Output("pos-type-select", "value"),
         Output("pos-fixation-input", "value"),
-        Input("btn-create-flip-position", "n_clicks"),
-        Input("btn-create-invest-position", "n_clicks"),
+        Input({"type": "btn-create-position", "index": dash.ALL}, "n_clicks"),
         Input("pos-cancel-btn", "n_clicks"),
         Input("pos-submit-btn", "n_clicks"),
         State("position-modal-store", "data"),
@@ -2249,19 +2248,28 @@ def _register_cookie_callbacks(app: dash.Dash) -> None:
         prevent_initial_call=True,
     )
     def toggle_position_modal(
-        flip_clicks, invest_clicks, cancel_clicks, submit_clicks,
+        create_clicks, cancel_clicks, submit_clicks,
         modal_data, invest_store, selected_cid,
     ):
         ctx = callback_context
         if not ctx.triggered:
             raise dash.exceptions.PreventUpdate
-        tid = ctx.triggered[0]["prop_id"].split(".")[0]
+        triggered = ctx.triggered[0]
+        tid = triggered["prop_id"].split(".")[0]
 
         if tid in ("pos-cancel-btn", "pos-submit-btn"):
             return False, {}, "Создать позицию", "", no_update, no_update, "flip", 5
 
-        # Determine position type from button
-        pos_type = "flip" if tid == "btn-create-flip-position" else "investment"
+        # Determine position type from pattern-matching button index
+        # Pattern: {"type": "btn-create-position", "index": "flip"|"invest"}
+        # Also supports hidden stubs: "btn-create-flip-position" / "btn-create-invest-position"
+        import json
+        try:
+            tid_dict = json.loads(tid)
+            pos_type = tid_dict.get("index", "flip")
+        except (json.JSONDecodeError, AttributeError):
+            # Fallback for string IDs (hidden stubs)
+            pos_type = "flip" if "flip" in tid else "investment"
         sig = invest_store.get(selected_cid or "", {}) if invest_store else {}
         from ui.helpers import _get_containers
         containers = _get_containers()
