@@ -265,6 +265,10 @@ async def run_backfill_history(
                         set_worker_phase("received", name)
                     except Exception:
                         pass
+                except InvalidHashNameError:
+                    logger.warning("backfill_history: invalid hash name for %s — auto-blacklisting", name)
+                    await asyncio.to_thread(_blacklist_container, name)
+                    continue
                 except Exception as exc:
                     logger.error("backfill_history: fetch error for %s — %s", name, exc)
                     errors += 1
@@ -347,6 +351,17 @@ async def run_backfill_history(
         return {"status": "rate_limited", "saved": saved_total, "errors": errors, "skipped_empty": skipped_empty}
     logger.info("backfill_history: done — saved=%d errors=%d skipped_empty=%d", saved_total, errors, skipped_empty)
     return {"status": "ok", "saved": saved_total, "errors": errors, "skipped_empty": skipped_empty}
+
+
+def _blacklist_container(name: str) -> None:
+    from src.domain.connection import SessionLocal
+    from src.domain.models import DimContainer
+    with SessionLocal() as db:
+        c = db.query(DimContainer).filter(DimContainer.container_name == name).first()
+        if c:
+            c.is_blacklisted = 1
+            db.commit()
+            logger.info("backfill_history: auto-blacklisted %r (Invalid Hash Name)", name)
 
 
 def _save_history_rows(cid: str, new_rows: list[dict]) -> int:
