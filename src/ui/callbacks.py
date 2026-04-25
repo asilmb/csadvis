@@ -1869,6 +1869,129 @@ def register_callbacks(app: Any) -> None:
             pass
         return _settings.steam_id or ""
 
+    # ── Task summary modal: open ──────────────────────────────────────────────
+    @app.callback(
+        Output("task-summary-modal", "is_open"),
+        Output("task-summary-title", "children"),
+        Output("task-summary-body", "children"),
+        Input({"type": "btn-task-summary", "index": ALL}, "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def open_task_summary(n_clicks_list: Any) -> Any:
+        ctx = callback_context
+        if not ctx.triggered:
+            raise dash.exceptions.PreventUpdate
+        triggered = [t for t in ctx.triggered if t.get("value") and t["value"] > 0]
+        if not triggered:
+            raise dash.exceptions.PreventUpdate
+        prop_id = triggered[0]["prop_id"]
+        try:
+            task_id = _json.loads(prop_id.rsplit(".", 1)[0])["index"]
+        except Exception:
+            raise dash.exceptions.PreventUpdate
+
+        import requests as _req
+        try:
+            r = _req.get(
+                f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/system/task-history/{task_id}/summary",
+                timeout=5,
+            )
+            if not r.ok:
+                return True, f"Summary #{task_id}", html.Span("Нет данных", style={"color": _MUTED})
+            data = r.json()
+            summary = data.get("summary") or []
+        except Exception as exc:
+            return True, f"Summary #{task_id}", html.Span(str(exc), style={"color": _RED})
+
+        if not summary:
+            return True, f"Summary #{task_id}", html.Span("Нет данных", style={"color": _MUTED})
+
+        first = summary[0] if summary else {}
+        if "saved" in first and "name" in first:
+            rows = [
+                html.Tr([
+                    html.Td(item.get("name", ""), style={"fontSize": "12px", "color": _TEXT}),
+                    html.Td(
+                        f"+{item['saved']}" if item.get("saved", 0) > 0 else "нет новых",
+                        style={"fontSize": "12px", "color": _YELLOW if item.get("saved", 0) > 0 else _MUTED},
+                    ),
+                ])
+                for item in summary
+            ]
+            body = dbc.Table(
+                [html.Thead(html.Tr([html.Th("Контейнер"), html.Th("Записей")])), html.Tbody(rows)],
+                bordered=False, size="sm",
+            )
+        elif "price" in first and "name" in first:
+            rows = [
+                html.Tr([
+                    html.Td(item.get("name", ""), style={"fontSize": "12px", "color": _TEXT}),
+                    html.Td(f"{item.get('price', 0):,}₸", style={"fontSize": "12px", "color": _YELLOW}),
+                    html.Td(f"vol {item.get('volume', 0):,}", style={"fontSize": "12px", "color": _MUTED}),
+                ])
+                for item in summary
+            ]
+            body = dbc.Table(
+                [html.Thead(html.Tr([html.Th("Контейнер"), html.Th("Цена"), html.Th("Объём")])), html.Tbody(rows)],
+                bordered=False, size="sm",
+            )
+        else:
+            rows = [
+                html.Tr([
+                    html.Td(k, style={"fontSize": "12px", "color": _MUTED}),
+                    html.Td(str(v), style={"fontSize": "12px", "color": _TEXT}),
+                ])
+                for k, v in first.items()
+            ]
+            body = dbc.Table(
+                [html.Thead(html.Tr([html.Th("Параметр"), html.Th("Значение")])), html.Tbody(rows)],
+                bordered=False, size="sm",
+            )
+
+        return True, f"Summary #{task_id}", body
+
+    # ── Task summary modal: close ─────────────────────────────────────────────
+    @app.callback(
+        Output("task-summary-modal", "is_open", allow_duplicate=True),
+        Input("task-summary-close-btn", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def close_task_summary(n: Any) -> bool:
+        return False
+
+    # ── Clear task history ────────────────────────────────────────────────────
+    @app.callback(
+        Output("tab-content", "children", allow_duplicate=True),
+        Output("app-toast", "children", allow_duplicate=True),
+        Output("app-toast", "header", allow_duplicate=True),
+        Output("app-toast", "is_open", allow_duplicate=True),
+        Output("app-toast", "icon", allow_duplicate=True),
+        Input("btn-clear-task-history", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def clear_task_history(n: Any) -> Any:
+        if not n:
+            raise dash.exceptions.PreventUpdate
+        import requests as _req
+        try:
+            r = _req.delete(
+                f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/system/task-history",
+                timeout=5,
+            )
+            data = r.json()
+            deleted = data.get("deleted", 0)
+        except Exception as exc:
+            from ui.renderers.system_status import render_system_status
+            return render_system_status(health=_get_system_health()), str(exc), "Ошибка", True, "danger"
+        from ui.renderers.system_status import render_system_status
+        return (
+            render_system_status(health=_get_system_health()),
+            f"История очищена — удалено {deleted} записей.",
+            "История задач",
+            True,
+            "success",
+        )
+
     _register_auth_modal_callbacks(app)
     _register_cookie_callbacks(app)
 
