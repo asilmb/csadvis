@@ -1,174 +1,379 @@
 """
-Lifecycle stage classifier for CS2 containers.
+LC-1: Behavioral lifecycle classifier with HMM + mathematical hysteresis.
 
-Determines which trading stage a container is in based on its age
-and current price/volume behavior. Used to gate flip and invest recommendations.
+Replaces the legacy age-based classification (NEW/ACTIVE/AGING/LEGACY/DEAD by
+first_seen_date) with a four-state behavioral model derived from price/volume
+dynamics. Operates per-container, on demand — no scheduler, no global training.
 
-Stages
+States
 ------
-NEW     0–6 months    high volatility, speculative — don't flip
-ACTIVE  6–24 months   main trading zone, good liquidity — primary flip candidate
-AGING   2–5 years     interest falling, patterns more predictable — cautious
-LEGACY  5+ years      stable, investment class — INVEST only, not FLIP
-DEAD    any age       detected by price/volume criteria — ban list
+SPECULATIVE_VOLATILITY (S1)  high σ, extreme volume spikes → release / pump-and-dump
+STABLE_LIQUIDITY       (S2)  narrow σ, mean-reverting, V_7d ≈ V_30d → flip zone
+DEFLATIONARY_GROWTH    (S3)  positive μ, declining σ and volume → rare-pool effect
+LIQUIDITY_STAGNATION   (S4)  σ → 0, volume → 0 → pruning candidate
 
-DEAD is checked first and overrides the age-based classification.
+Approach
+--------
+Primary path: per-container Gaussian HMM (4 states) fitted via Baum-Welch on the
+log-return + log-volume series. The hidden states are mapped to LifecyclePhase
+by their emission moments (highest σ → S1, lowest σ + flat μ → S4, mid σ +
+positive μ → S3, otherwise S2).
 
-DEAD criteria (any one is sufficient):
-  1. Current price is within 5 % of the all-time historical minimum.
-  2. No price movement: (max − min) / mean < 3 % over last 30 days.
-  3. Declining volume:  avg_vol_7d < avg_vol_30d * 0.50.
+Defensive fallback: when the series is too short (<30 obs), HMM fit fails to
+converge, or hmmlearn is unavailable, the classifier falls back to a metric
+threshold rule that uses the same four-state ontology.
 
-Usage example::
-
-    >>> from datetime import date
-    >>> today = date(2025, 6, 1)
-    >>> first_seen = date(2023, 6, 1)          # 2 years ago → AGING
-    >>> prices_30d = [150.0] * 30              # flat price, no movement
-    >>> vol_7d, vol_30d = 5.0, 20.0            # declining volume → DEAD
-    >>> all_time_prices = [100.0, 200.0, 150.0]
-    >>> classify_lifecycle(first_seen, today, prices_30d, vol_7d, vol_30d, all_time_prices)
-    <LifecycleStage.DEAD: 'DEAD'>
-
-    >>> vol_7d_ok, vol_30d_ok = 18.0, 20.0    # healthy volume
-    >>> prices_30d_moving = list(range(130, 160))  # clear movement
-    >>> classify_lifecycle(first_seen, today, prices_30d_moving, vol_7d_ok, vol_30d_ok, all_time_prices)
-    <LifecycleStage.AGING: 'AGING'>
+Hysteresis
+----------
+Direct Viterbi output is unstable on noisy crypto-like markets. To prevent
+"flapping" (e.g. day-long pump misclassified as a regime change), every
+candidate phase is filtered through a Schmitt-trigger style hysteresis: leaving
+the prior state requires the controlling metric to cross a strict EXIT band,
+not just enter another state's region.
 """
 
 from __future__ import annotations
 
-from datetime import date
+import logging
+import math
+import warnings
+from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
-# ─── Stage thresholds (days) ──────────────────────────────────────────────────
+import numpy as np
 
-_NEW_MAX_DAYS = 180        # 0–6 months
-_ACTIVE_MAX_DAYS = 730     # 6–24 months  (2 years)
-_AGING_MAX_DAYS = 1825     # 2–5 years    (5 years)
-# >= 1825 days → LEGACY
-
-# ─── DEAD detection thresholds ────────────────────────────────────────────────
-
-_DEAD_ATH_MIN_PCT = 0.05          # within 5 % of all-time minimum
-_DEAD_NO_MOVEMENT_PCT = 0.03      # (max − min) / mean < 3 % over 30 days
-_DEAD_VOLUME_DECLINE_RATIO = 0.50  # avg_vol_7d < avg_vol_30d * 50 %
+logger = logging.getLogger(__name__)
 
 
-# ─── Stage enum ───────────────────────────────────────────────────────────────
+# ─── State enum ───────────────────────────────────────────────────────────────
 
 
-class LifecycleStage(StrEnum):
-    NEW = "NEW"
-    ACTIVE = "ACTIVE"
-    AGING = "AGING"
-    LEGACY = "LEGACY"
-    DEAD = "DEAD"
+class LifecyclePhase(StrEnum):
+    SPECULATIVE_VOLATILITY = "SPECULATIVE_VOLATILITY"
+    STABLE_LIQUIDITY = "STABLE_LIQUIDITY"
+    DEFLATIONARY_GROWTH = "DEFLATIONARY_GROWTH"
+    LIQUIDITY_STAGNATION = "LIQUIDITY_STAGNATION"
 
 
-# ─── DEAD detection helpers ───────────────────────────────────────────────────
+# Backwards-compat alias for code not yet migrated off the old name.
+LifecycleStage = LifecyclePhase
 
 
-def _is_near_all_time_min(current_price: float, all_time_prices: list[float]) -> bool:
-    """Return True when current_price is within 5 % of the all-time minimum."""
-    if not all_time_prices:
-        return False
-    atl = min(all_time_prices)
-    if atl <= 0:
-        return False
-    return current_price <= atl * (1.0 + _DEAD_ATH_MIN_PCT)
+# ─── Thresholds ───────────────────────────────────────────────────────────────
+# Daily log-return σ. Values empirically calibrated; tighten/relax via PRs only.
+
+_MIN_OBSERVATIONS = 30          # below this → fallback only
+_HMM_MIN_OBSERVATIONS = 45      # below this → skip HMM, go straight to metric
+_HMM_N_STATES = 4
+_HMM_N_ITER = 50
+_HMM_RANDOM_STATE = 42
+
+# Entry thresholds (used to decide candidate phase from metrics).
+_SIGMA_HIGH_ENTER = 0.10        # σ ≥ 10 % → SPECULATIVE
+_SIGMA_LOW_ENTER = 0.025        # σ ≤ 2.5 % → STAGNATION (when volume confirms)
+_VOL_RATIO_LOW_ENTER = 0.50     # V7/V30 < 0.5 confirms stagnation
+_DRIFT_POS_ENTER = 0.003        # μ ≥ 0.3 %/day → DEFLATIONARY_GROWTH
+_SIGMA_DEFL_MAX = 0.07          # DG requires σ ≤ 7 %
+
+# Exit thresholds (used by hysteresis when prior state is set; STRICTER than
+# entry — must clearly cross to leave).
+_SIGMA_HIGH_EXIT = 0.07         # leave SPECULATIVE only when σ ≤ 7 %
+_SIGMA_LOW_EXIT = 0.04          # leave STAGNATION only when σ ≥ 4 %
+_VOL_RATIO_LOW_EXIT = 0.70      # or vol_ratio ≥ 0.7
+_DRIFT_POS_EXIT = 0.001         # leave DG when μ ≤ 0.1 %/day
+
+# Default per-state daily expected log return (μ_i) used when HMM is unavailable.
+# Conservative — calibrated against the research's qualitative state descriptions.
+_DEFAULT_MU_PER_STATE: dict[LifecyclePhase, float] = {
+    LifecyclePhase.SPECULATIVE_VOLATILITY: 0.000,
+    LifecyclePhase.STABLE_LIQUIDITY:       0.000,
+    LifecyclePhase.DEFLATIONARY_GROWTH:    0.004,
+    LifecyclePhase.LIQUIDITY_STAGNATION:  -0.001,
+}
+
+# Default transition matrix A (rows = from, cols = to) used when HMM A is
+# unavailable. Diagonal-heavy → states are sticky (consistent with hysteresis).
+# Order: [SPECULATIVE, STABLE, DEFLATIONARY, STAGNATION]
+_DEFAULT_TRANSITION_MATRIX = np.array(
+    [
+        [0.70, 0.20, 0.05, 0.05],
+        [0.05, 0.85, 0.05, 0.05],
+        [0.05, 0.10, 0.80, 0.05],
+        [0.10, 0.10, 0.05, 0.75],
+    ]
+)
+_PHASE_ORDER = [
+    LifecyclePhase.SPECULATIVE_VOLATILITY,
+    LifecyclePhase.STABLE_LIQUIDITY,
+    LifecyclePhase.DEFLATIONARY_GROWTH,
+    LifecyclePhase.LIQUIDITY_STAGNATION,
+]
 
 
-def _has_no_price_movement(prices_30d: list[float]) -> bool:
-    """Return True when price range over last 30 days is less than 3 % of the mean."""
-    if not prices_30d:
-        return False
-    mean = sum(prices_30d) / len(prices_30d)
-    if mean <= 0:
-        return False
-    movement = (max(prices_30d) - min(prices_30d)) / mean
-    return movement < _DEAD_NO_MOVEMENT_PCT
+# ─── Feature engineering ──────────────────────────────────────────────────────
 
 
-def _has_declining_volume(vol_7d: float, vol_30d_avg: float) -> bool:
-    """Return True when 7-day avg volume is less than 50 % of 30-day avg volume."""
-    if vol_30d_avg <= 0:
-        return False
-    return vol_7d < vol_30d_avg * _DEAD_VOLUME_DECLINE_RATIO
+@dataclass(frozen=True)
+class _Features:
+    log_returns: np.ndarray         # 1-D, length = N-1
+    log_volume: np.ndarray          # 1-D, length = N-1 (aligned with log_returns)
+    sigma_30: float                 # std of last 30 log returns
+    sigma_90: float                 # std of full window
+    drift: float                    # mean of last 30 log returns
+    vol_ratio: float                # mean(V_7d) / mean(V_30d)
 
 
-def _is_dead(
-    current_price: float,
-    prices_30d: list[float],
-    vol_7d: float,
-    vol_30d_avg: float,
-    all_time_prices: list[float],
-) -> bool:
-    """Return True when any DEAD criterion is met."""
-    return (
-        _is_near_all_time_min(current_price, all_time_prices)
-        or _has_no_price_movement(prices_30d)
-        or _has_declining_volume(vol_7d, vol_30d_avg)
+def _compute_features(
+    price_series: list[float],
+    volume_series: list[int] | list[float],
+) -> _Features | None:
+    """Return engineered features or None when input is unusable."""
+    prices = np.asarray([p for p in price_series if p and p > 0], dtype=float)
+    vols = np.asarray([float(v) if v else 0.0 for v in volume_series], dtype=float)
+    if prices.size < _MIN_OBSERVATIONS:
+        return None
+    # Align volumes to prices (truncate to min length)
+    n = min(prices.size, vols.size)
+    prices = prices[-n:]
+    vols = vols[-n:]
+
+    log_returns = np.diff(np.log(prices))
+    # log volume — clip 0 to avoid -inf
+    log_volume = np.log(np.clip(vols[1:], a_min=1.0, a_max=None))
+
+    last_30 = log_returns[-30:]
+    sigma_30 = float(np.std(last_30, ddof=1)) if last_30.size >= 2 else 0.0
+    sigma_90 = float(np.std(log_returns, ddof=1)) if log_returns.size >= 2 else 0.0
+    drift = float(np.mean(last_30)) if last_30.size else 0.0
+
+    last_7d_vol = float(np.mean(vols[-7:])) if vols[-7:].size else 0.0
+    last_30d_vol = float(np.mean(vols[-30:])) if vols[-30:].size else 0.0
+    vol_ratio = last_7d_vol / last_30d_vol if last_30d_vol > 0 else 0.0
+
+    return _Features(
+        log_returns=log_returns,
+        log_volume=log_volume,
+        sigma_30=sigma_30,
+        sigma_90=sigma_90,
+        drift=drift,
+        vol_ratio=vol_ratio,
     )
+
+
+# ─── Metric-based classifier (fallback + HMM mapping reference) ───────────────
+
+
+def _classify_by_metrics(f: _Features) -> LifecyclePhase:
+    """Strict-threshold classifier (no hysteresis). Used as fallback and as the
+    semantic anchor for mapping HMM hidden states → LifecyclePhase."""
+    if f.sigma_30 <= _SIGMA_LOW_ENTER and f.vol_ratio < _VOL_RATIO_LOW_ENTER:
+        return LifecyclePhase.LIQUIDITY_STAGNATION
+    if f.sigma_30 >= _SIGMA_HIGH_ENTER:
+        return LifecyclePhase.SPECULATIVE_VOLATILITY
+    if (
+        f.drift >= _DRIFT_POS_ENTER
+        and f.sigma_30 <= _SIGMA_DEFL_MAX
+        and f.vol_ratio < 1.05
+    ):
+        return LifecyclePhase.DEFLATIONARY_GROWTH
+    return LifecyclePhase.STABLE_LIQUIDITY
+
+
+# ─── HMM path ─────────────────────────────────────────────────────────────────
+
+
+def _try_hmm_classify(f: _Features) -> tuple[LifecyclePhase, np.ndarray, dict] | None:
+    """Fit per-container Gaussian HMM and return (last_phase, transmat, μ_map).
+
+    Returns None on any failure (import, convergence, degenerate data).
+    Caller is expected to fall back to metric classification.
+    """
+    if f.log_returns.size < _HMM_MIN_OBSERVATIONS:
+        return None
+    try:
+        from hmmlearn.hmm import GaussianHMM
+    except ImportError:
+        logger.debug("hmmlearn not installed — falling back to metric classifier")
+        return None
+
+    X = np.column_stack([f.log_returns, f.log_volume])
+    # Replace any non-finite values
+    if not np.isfinite(X).all():
+        return None
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            model = GaussianHMM(
+                n_components=_HMM_N_STATES,
+                covariance_type="diag",
+                n_iter=_HMM_N_ITER,
+                random_state=_HMM_RANDOM_STATE,
+            )
+            model.fit(X)
+            hidden = model.predict(X)
+    except Exception as e:  # numpy / hmmlearn convergence error
+        logger.debug("HMM fit failed: %s — falling back to metric classifier", e)
+        return None
+
+    # Map hidden states {0..3} → LifecyclePhase using emission moments
+    # (variance on log-return component is the dominant discriminator).
+    means = model.means_[:, 0]                       # μ on log_returns dim
+    variances = np.array([cov[0] for cov in model.covars_])  # σ² on log_returns
+    sigmas = np.sqrt(np.clip(variances, a_min=0.0, a_max=None))
+
+    # Sort indices by σ ascending: lowest σ → STAGNATION, highest → SPECULATIVE
+    order_by_sigma = np.argsort(sigmas)
+    state_to_phase: dict[int, LifecyclePhase] = {}
+    state_to_phase[int(order_by_sigma[0])] = LifecyclePhase.LIQUIDITY_STAGNATION
+    state_to_phase[int(order_by_sigma[-1])] = LifecyclePhase.SPECULATIVE_VOLATILITY
+    # Of the two middle states, the one with higher μ → DEFLATIONARY_GROWTH
+    mid_a, mid_b = int(order_by_sigma[1]), int(order_by_sigma[2])
+    if means[mid_a] >= means[mid_b]:
+        state_to_phase[mid_a] = LifecyclePhase.DEFLATIONARY_GROWTH
+        state_to_phase[mid_b] = LifecyclePhase.STABLE_LIQUIDITY
+    else:
+        state_to_phase[mid_b] = LifecyclePhase.DEFLATIONARY_GROWTH
+        state_to_phase[mid_a] = LifecyclePhase.STABLE_LIQUIDITY
+
+    # Permute model.transmat_ into canonical _PHASE_ORDER order
+    phase_to_state = {v: k for k, v in state_to_phase.items()}
+    perm = np.array([phase_to_state[p] for p in _PHASE_ORDER])
+    transmat = model.transmat_[np.ix_(perm, perm)]
+
+    mu_per_phase = {
+        _PHASE_ORDER[i]: float(means[perm[i]]) for i in range(len(_PHASE_ORDER))
+    }
+
+    last_phase = state_to_phase[int(hidden[-1])]
+    return last_phase, transmat, mu_per_phase
+
+
+# ─── Hysteresis (Schmitt-trigger style) ───────────────────────────────────────
+
+
+def _apply_hysteresis(
+    prior: LifecyclePhase | None,
+    candidate: LifecyclePhase,
+    f: _Features,
+) -> LifecyclePhase:
+    """Suppress regime transition until controlling metric clears the EXIT band
+    of the prior state. When prior is None or matches candidate, pass through.
+    """
+    if prior is None or prior == candidate:
+        return candidate
+
+    if prior == LifecyclePhase.LIQUIDITY_STAGNATION:
+        # Stay stagnant unless σ clearly recovers OR volume_ratio recovers
+        if f.sigma_30 >= _SIGMA_LOW_EXIT or f.vol_ratio >= _VOL_RATIO_LOW_EXIT:
+            return candidate
+        return prior
+
+    if prior == LifecyclePhase.SPECULATIVE_VOLATILITY:
+        # Stay speculative until σ subsides under the exit floor
+        if f.sigma_30 <= _SIGMA_HIGH_EXIT:
+            return candidate
+        return prior
+
+    if prior == LifecyclePhase.DEFLATIONARY_GROWTH:
+        # Stay in DG unless drift collapses OR volatility explodes
+        if f.drift <= _DRIFT_POS_EXIT or f.sigma_30 >= _SIGMA_HIGH_ENTER:
+            return candidate
+        return prior
+
+    # prior == STABLE_LIQUIDITY — neutral default; allow free transitions.
+    return candidate
 
 
 # ─── Public API ───────────────────────────────────────────────────────────────
 
 
 def classify_lifecycle(
-    first_seen_date: date,       # earliest date in price history
-    current_date: date,          # today
-    prices_30d: list[float],     # prices in last 30 days (chronological)
-    vol_7d: float,               # avg daily volume last 7 days
-    vol_30d_avg: float,          # avg daily volume last 30 days
-    all_time_prices: list[float], # all historical prices
-) -> LifecycleStage:
-    """
-    Classify a container into a LifecycleStage.
-
-    DEAD is evaluated before age-based classification — a container of any age
-    can be marked DEAD if its price/volume behaviour matches the criteria.
+    price_series: list[float],
+    volume_series: list[int] | list[float],
+    prior_phase: LifecyclePhase | None = None,
+) -> tuple[LifecyclePhase | None, dict[str, Any]]:
+    """Classify a container's current behavioral phase.
 
     Args:
-        first_seen_date:  Earliest date in the price history.
-        current_date:     Reference date for age calculation (typically today).
-        prices_30d:       Chronological list of prices over the last 30 days.
-        vol_7d:           Average daily trading volume for the last 7 days.
-        vol_30d_avg:      Average daily trading volume for the last 30 days.
-        all_time_prices:  Complete historical price list (used for ATL detection).
+        price_series:   chronological prices (~90 daily points).
+        volume_series:  matching volume (any length ≥ price; truncated to align).
+        prior_phase:    last persisted phase from dim_containers (for hysteresis).
+                        Pass None on first-ever classification.
 
     Returns:
-        The matching LifecycleStage enum member.
+        (phase, metrics). phase is None when input is too short for a reliable
+        decision; metrics always carries best-effort debug info.
     """
-    current_price = prices_30d[-1] if prices_30d else 0.0
+    f = _compute_features(price_series, volume_series)
+    if f is None:
+        return None, {"reason": "insufficient_data"}
 
-    # DEAD check takes priority over everything else
-    if _is_dead(current_price, prices_30d, vol_7d, vol_30d_avg, all_time_prices):
-        return LifecycleStage.DEAD
+    hmm_result = _try_hmm_classify(f)
+    if hmm_result is not None:
+        candidate, transmat, mu_per_phase = hmm_result
+        source = "hmm"
+    else:
+        candidate = _classify_by_metrics(f)
+        transmat = _DEFAULT_TRANSITION_MATRIX
+        mu_per_phase = dict(_DEFAULT_MU_PER_STATE)
+        source = "metric_fallback"
 
-    age_days = (current_date - first_seen_date).days
+    confirmed = _apply_hysteresis(prior_phase, candidate, f)
 
-    if age_days < _NEW_MAX_DAYS:
-        return LifecycleStage.NEW
-    if age_days < _ACTIVE_MAX_DAYS:
-        return LifecycleStage.ACTIVE
-    if age_days < _AGING_MAX_DAYS:
-        return LifecycleStage.AGING
-    return LifecycleStage.LEGACY
+    metrics = {
+        "source": source,
+        "sigma_30": f.sigma_30,
+        "sigma_90": f.sigma_90,
+        "drift": f.drift,
+        "vol_ratio": f.vol_ratio,
+        "candidate_phase": candidate.value,
+        "confirmed_phase": confirmed.value,
+        "prior_phase": prior_phase.value if prior_phase else None,
+        "_transmat": transmat,        # numpy array — not JSON-serialisable; for forecast()
+        "_mu_per_phase": mu_per_phase,
+    }
+    return confirmed, metrics
 
 
-def is_flip_eligible(stage: LifecycleStage) -> bool:
-    """Return True when the stage is suitable for flip trading.
+def compute_expected_returns(
+    confirmed_phase: LifecyclePhase,
+    metrics: dict[str, Any],
+    horizons_days: tuple[int, ...] = (30, 90, 180),
+) -> dict[str, float]:
+    """Project E[log return] per horizon via π_t · A^k · μ.
 
-    ACTIVE is the primary flip candidate; AGING is cautious-ok.
-    NEW is too volatile, LEGACY is investment-only, DEAD is banned.
+    Uses the transition matrix and per-phase μ extracted by classify_lifecycle()
+    (HMM-derived when available, default priors otherwise).
     """
-    return stage in (LifecycleStage.ACTIVE, LifecycleStage.AGING)
+    transmat: np.ndarray = metrics.get("_transmat", _DEFAULT_TRANSITION_MATRIX)
+    mu_per_phase: dict[LifecyclePhase, float] = metrics.get(
+        "_mu_per_phase", dict(_DEFAULT_MU_PER_STATE)
+    )
+
+    # π_t — point mass on confirmed_phase
+    pi_t = np.zeros(len(_PHASE_ORDER))
+    pi_t[_PHASE_ORDER.index(confirmed_phase)] = 1.0
+    mu_vec = np.array([mu_per_phase.get(p, 0.0) for p in _PHASE_ORDER])
+
+    out: dict[str, float] = {}
+    for k in horizons_days:
+        # cumulative log return = Σ_{t=1..k} π_t A^t · μ
+        cumulative = 0.0
+        pi_step = pi_t.copy()
+        for _ in range(k):
+            pi_step = pi_step @ transmat
+            cumulative += float(pi_step @ mu_vec)
+        # Convert cumulative log-return to simple return
+        out[f"{k}d"] = math.expm1(cumulative)
+    return out
 
 
-def is_invest_eligible(stage: LifecycleStage) -> bool:
-    """Return True when the stage is suitable for long-term investment.
+def is_flip_eligible(phase: LifecyclePhase | None) -> bool:
+    """Flip = high-frequency narrow-spread trading. Only STABLE_LIQUIDITY qualifies."""
+    return phase == LifecyclePhase.STABLE_LIQUIDITY
 
-    AGING and LEGACY stages are invest candidates.
-    """
-    return stage in (LifecycleStage.AGING, LifecycleStage.LEGACY)
+
+def is_invest_eligible(phase: LifecyclePhase | None) -> bool:
+    """Long-term invest = supply-contraction uptrend. Only DEFLATIONARY_GROWTH qualifies."""
+    return phase == LifecyclePhase.DEFLATIONARY_GROWTH

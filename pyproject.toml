@@ -35,6 +35,7 @@ dependencies = [
     "structlog>=24.1.0",
     "prometheus-client>=0.20.0",
     "cryptography>=42.0.0",
+    "hmmlearn>=0.3.0",
 ]
 
 [project.scripts]

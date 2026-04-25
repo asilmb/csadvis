@@ -60,6 +60,16 @@ class DimContainer(Base):
     error_count = Column(Integer, nullable=False, default=0)       # PV-50: consecutive Steam errors
     is_blacklisted = Column(Integer, nullable=False, default=0)   # PV-50: skip-list flag (0/1)
 
+    # ── LC-1: dynamic behavioral lifecycle (HMM + hysteresis) ──────────────────
+    # current_lifecycle_phase ∈ {SPECULATIVE_VOLATILITY, STABLE_LIQUIDITY,
+    # DEFLATIONARY_GROWTH, LIQUIDITY_STAGNATION}; NULL until first manual analysis.
+    current_lifecycle_phase = Column(String(40), nullable=True)
+    lifecycle_updated_at = Column(DateTime, nullable=True)
+    expected_return_1m = Column(Float, nullable=True)
+    expected_return_3m = Column(Float, nullable=True)
+    expected_return_6m = Column(Float, nullable=True)
+    forecast_invalidated_at = Column(DateTime, nullable=True)  # set when external shock invalidates HMM
+
     price_history = relationship("FactContainerPrice", back_populates="container", lazy="dynamic")
 
     def __repr__(self) -> str:

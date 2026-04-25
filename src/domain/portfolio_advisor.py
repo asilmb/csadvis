@@ -34,7 +34,12 @@ from datetime import UTC, datetime, timedelta
 from config import settings
 from src.domain.analytics.armory_advisor import DEFAULT_REWARD_CATALOG as _ARMORY_POOL
 from src.domain.events import SuperDealDetected
-from src.domain.lifecycle import classify_lifecycle, is_flip_eligible, is_invest_eligible
+from src.domain.lifecycle import (
+    LifecyclePhase,
+    classify_lifecycle,
+    is_flip_eligible,
+    is_invest_eligible,
+)
 from src.domain.services import SuperDealDomainService
 from src.domain.specifications import PriceWithinRange, ZScoreBelow
 from src.domain.value_objects import ROI, Amount
@@ -82,6 +87,38 @@ def _volatility(prices: list[float]) -> float | None:
     if mean_p == 0:
         return None
     return statistics.stdev(prices) / mean_p
+
+
+def _lc_extract_series(history: list[dict], days: int = 120) -> tuple[list[float], list[int]]:
+    """Return (prices, volumes) sorted chronologically over the last `days`.
+
+    Used by the LC-1 behavioral lifecycle classifier — pairs each price point
+    with its accompanying volume_7d so the HMM emission has both dimensions.
+    """
+    cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=days)
+    pairs: list[tuple[datetime, float, int]] = []
+    for h in history:
+        try:
+            dt = _parse_ts(h)
+            p = h.get("price")
+            v = h.get("volume_7d") or 0
+            if dt >= cutoff and p and float(p) > 0:
+                pairs.append((dt, float(p), int(v)))
+        except (ValueError, TypeError, KeyError):
+            continue
+    pairs.sort(key=lambda x: x[0])
+    return [p for _, p, _ in pairs], [v for _, _, v in pairs]
+
+
+def _lc_prior_phase(c: object) -> LifecyclePhase | None:
+    """Read previously persisted phase from a DimContainer; tolerate NULL/legacy."""
+    raw = getattr(c, "current_lifecycle_phase", None)
+    if not raw:
+        return None
+    try:
+        return LifecyclePhase(raw)
+    except ValueError:
+        return None  # legacy values like "ACTIVE" / "AGING" — treat as no prior
 
 
 def _prices_in_window(history: list[dict], days: int) -> list[float]:
@@ -559,23 +596,16 @@ def allocate_portfolio(
             _flip_rejected["no_volatility_data"] = _flip_rejected.get("no_volatility_data", 0) + 1
             continue  # insufficient price history for flip assessment
 
-        # Lifecycle gate — only skip truly NEW (no data) or DEAD stages for flip.
-        # LEGACY cases can still be viable flips if they have volume and volatility.
-        _lc_all_prices = [float(h["price"]) for h in _history_for_lc if h.get("price")]
-        _lc_first_date = _earliest_date(_history_for_lc)
-        if _lc_first_date is not None and _lc_all_prices:
-            _lc_vol_30d_avg = float(weekly_vol) / 30 if weekly_vol else 0.0
-            _lc_stage = classify_lifecycle(
-                first_seen_date=_lc_first_date.date(),
-                current_date=datetime.now(UTC).replace(tzinfo=None).date(),
-                prices_30d=prices_30d,
-                vol_7d=float(weekly_vol) / 7 if weekly_vol else 0.0,
-                vol_30d_avg=_lc_vol_30d_avg,
-                all_time_prices=_lc_all_prices,
-            )
-            # Only exclude NEW (speculation) and DEAD (no volume); LEGACY is allowed
-            if _lc_stage in ("NEW", "DEAD"):
-                _flip_rejected[f"lifecycle_{_lc_stage}"] = _flip_rejected.get(f"lifecycle_{_lc_stage}", 0) + 1
+        # LC-1: behavioral lifecycle gate — only STABLE_LIQUIDITY qualifies for flip.
+        _lc_prices, _lc_vols = _lc_extract_series(_history_for_lc)
+        if _lc_prices:
+            _lc_phase, _ = classify_lifecycle(_lc_prices, _lc_vols, _lc_prior_phase(c))
+            if _lc_phase is None:
+                _flip_rejected["lifecycle_no_data"] = _flip_rejected.get("lifecycle_no_data", 0) + 1
+                continue
+            if not is_flip_eligible(_lc_phase):
+                key = f"lifecycle_{_lc_phase.value}"
+                _flip_rejected[key] = _flip_rejected.get(key, 0) + 1
                 continue
 
         # Float: avg daily volume (proxy for liquidity)
@@ -688,23 +718,14 @@ def allocate_portfolio(
             continue  # managed via Armory Pass — excluded from invest pool
         history = price_history.get(str(c.container_id), [])
 
-        # Lifecycle gate — only AGING and LEGACY for invest
-        _lc_all_prices_inv = [float(h["price"]) for h in history if h.get("price")]
-        _lc_first_date_inv = _earliest_date(history)
-        if _lc_first_date_inv is not None and _lc_all_prices_inv:
-            _lc_prices_30d_inv = _prices_in_window(history, 30)
-            _lc_pd_info_inv = price_data.get(str(c.container_name), {})
-            _lc_weekly_vol_inv = float(_lc_pd_info_inv.get("quantity") or 0)
-            _lc_stage_inv = classify_lifecycle(
-                first_seen_date=_lc_first_date_inv.date(),
-                current_date=datetime.now(UTC).replace(tzinfo=None).date(),
-                prices_30d=_lc_prices_30d_inv,
-                vol_7d=_lc_weekly_vol_inv / 7 if _lc_weekly_vol_inv else 0.0,
-                vol_30d_avg=_lc_weekly_vol_inv / 30 if _lc_weekly_vol_inv else 0.0,
-                all_time_prices=_lc_all_prices_inv,
+        # LC-1: behavioral lifecycle gate — only DEFLATIONARY_GROWTH qualifies for invest.
+        _lc_prices_inv, _lc_vols_inv = _lc_extract_series(history)
+        if _lc_prices_inv:
+            _lc_phase_inv, _ = classify_lifecycle(
+                _lc_prices_inv, _lc_vols_inv, _lc_prior_phase(c)
             )
-            if not is_invest_eligible(_lc_stage_inv):
-                continue  # NEW (too young), ACTIVE (flip candidate), or DEAD
+            if _lc_phase_inv is None or not is_invest_eligible(_lc_phase_inv):
+                continue
 
         gross_cagr, net_cagr, years = _compute_cagr_metrics(history)
 

@@ -125,18 +125,16 @@ for c in containers:
         continue
 
     if rows_90:
+        from src.domain.lifecycle import is_flip_eligible
         all_prices_90 = [r.price for r in rows_90]
-        first_date    = min(r.timestamp for r in rows_90).date()
-        lc_stage      = classify_lifecycle(
-            first_seen_date=first_date,
-            current_date=now.date(),
-            prices_30d=prices_30,
-            vol_7d=0,
-            vol_30d_avg=0,
-            all_time_prices=all_prices_90,
-        )
-        if lc_stage in ("NEW", "DEAD"):
-            rejected[f"lifecycle_{lc_stage}"] = rejected.get(f"lifecycle_{lc_stage}", 0) + 1
+        all_vols_90   = [getattr(r, "volume_7d", 0) or 0 for r in rows_90]
+        lc_phase, _   = classify_lifecycle(all_prices_90, all_vols_90, None)
+        if lc_phase is None:
+            rejected["lifecycle_no_data"] = rejected.get("lifecycle_no_data", 0) + 1
+            continue
+        if not is_flip_eligible(lc_phase):
+            key = f"lifecycle_{lc_phase.value}"
+            rejected[key] = rejected.get(key, 0) + 1
             continue
 
     if vol_30d < _VOL_MIN or vol_30d > _VOL_MAX:

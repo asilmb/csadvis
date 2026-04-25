@@ -117,7 +117,7 @@ def test_flip_pipeline_breakdown(live_data):
     a detailed rejection breakdown + top candidates.
     """
     from src.domain.analytics.armory_advisor import DEFAULT_REWARD_CATALOG as _ARMORY_POOL
-    from src.domain.lifecycle import classify_lifecycle
+    from src.domain.lifecycle import classify_lifecycle, is_flip_eligible
     from src.domain.trade_advisor import compute_trade_advice
     from config import settings
 
@@ -197,20 +197,17 @@ def test_flip_pipeline_breakdown(live_data):
             rejected["no_volatility_data"] = rejected.get("no_volatility_data", 0) + 1
             continue
 
-        # ── gate 5: lifecycle ────────────────────────────────────────────────
+        # ── gate 5: lifecycle (LC-1 behavioral) ──────────────────────────────
         if rows_90:
             all_prices_90 = [r.price for r in rows_90]
-            first_date    = min(r.timestamp for r in rows_90).date()
-            lc_stage      = classify_lifecycle(
-                first_seen_date=first_date,
-                current_date=now.date(),
-                prices_30d=prices_30,
-                vol_7d=0,
-                vol_30d_avg=0,
-                all_time_prices=all_prices_90,
-            )
-            if lc_stage in ("NEW", "DEAD"):
-                rejected[f"lifecycle_{lc_stage}"] = rejected.get(f"lifecycle_{lc_stage}", 0) + 1
+            all_vols_90   = [getattr(r, "volume_7d", 0) or 0 for r in rows_90]
+            lc_phase, _   = classify_lifecycle(all_prices_90, all_vols_90, None)
+            if lc_phase is None:
+                rejected["lifecycle_no_data"] = rejected.get("lifecycle_no_data", 0) + 1
+                continue
+            if not is_flip_eligible(lc_phase):
+                key = f"lifecycle_{lc_phase.value}"
+                rejected[key] = rejected.get(key, 0) + 1
                 continue
 
         # ── gate 6: volatility range ─────────────────────────────────────────
