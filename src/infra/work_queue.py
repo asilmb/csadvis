@@ -26,9 +26,9 @@ the web server keeps accepting requests.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import random
-from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -42,7 +42,6 @@ logger = logging.getLogger(__name__)
 
 _work_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=10)
 _queue_shadow: list[str] = []  # mirrors queue job types for status display (no private API access)
-_task_history: deque[dict] = deque(maxlen=30)
 
 # Max time (seconds) to stay in PAUSED_AUTH before giving up the current job.
 _AUTH_WAIT_TIMEOUT_S = 1800  # 30 min
@@ -90,6 +89,7 @@ class _WorkerState:
     phase_at: datetime | None = None
     current_item_name: str = ""  # item being fetched right now (before completion)
     _current_task: asyncio.Task | None = field(default=None, repr=False, compare=False)
+    _current_summary: list[dict] = field(default_factory=list, repr=False)
 
 
 _state = _WorkerState()
@@ -113,7 +113,44 @@ def enqueue(job: dict) -> None:
 
 
 def get_task_history() -> list[dict]:
-    return list(_task_history)
+    """Read task history from the DB (last 50 records, newest first)."""
+    from src.domain.connection import SessionLocal
+    from src.domain.models import TaskHistory
+    try:
+        with SessionLocal() as db:
+            rows = db.query(TaskHistory).order_by(TaskHistory.id.desc()).limit(50).all()
+            return [
+                {
+                    "id": r.id,
+                    "type": r.job_type,
+                    "status": r.status,
+                    "started_at": r.started_at.isoformat(),
+                    "finished_at": r.finished_at.isoformat(),
+                    "duration_s": r.duration_s,
+                    "detail": r.detail,
+                    "error": r.error,
+                    "has_summary": bool(r.summary_json),
+                }
+                for r in rows
+            ]
+    except Exception as exc:
+        logger.error("get_task_history: DB read failed — %s", exc)
+        return []
+
+
+def get_task_summary(task_id: int) -> list[dict] | dict | None:
+    """Return the parsed summary_json for a given task id."""
+    from src.domain.connection import SessionLocal
+    from src.domain.models import TaskHistory
+    try:
+        with SessionLocal() as db:
+            row = db.get(TaskHistory, task_id)
+            if not row or not row.summary_json:
+                return None
+            return json.loads(row.summary_json)
+    except Exception as exc:
+        logger.error("get_task_summary: DB read failed — %s", exc)
+        return None
 
 
 def request_cancel() -> None:
@@ -161,6 +198,7 @@ def get_worker_state() -> dict:
         "last_item_name": _state.last_item_name,
         "last_item_price": _state.last_item_price,
         "last_item_volume": _state.last_item_volume,
+        "last_job_detail": _state.last_job_detail,
         "phase": _state.phase,
         "seconds_in_phase": seconds_in_phase,
         "current_item_name": _state.current_item_name,
@@ -254,7 +292,9 @@ async def _handle_market_catalog(_job: dict) -> None:
         logger.error("market_catalog: auth timeout — skipping")
         return
     from scrapper.runner import run_market_sync
-    await run_market_sync()
+    result = await run_market_sync()
+    _state.last_job_detail = f"scraped={result.get('scraped', 0)} new={result.get('inserted', 0)}"
+    _state._current_summary = [{"scraped": result.get("scraped", 0), "inserted": result.get("inserted", 0)}]
 
 
 async def _handle_price_poll(job: dict) -> None:
@@ -265,13 +305,7 @@ async def _handle_price_poll(job: dict) -> None:
 
     import asyncio as _asyncio
 
-    from infra.scrape_guard import (
-        ScrapeBlocked,
-        check_cooldown,
-        create_session,
-        finish_session,
-        tick_session,
-    )
+    from infra.scrape_guard import ScrapeBlocked, check_cooldown
     from scrapper.steam.client import _is_emergency_blocked
     from src.domain.models import DimContainer
 
@@ -284,7 +318,6 @@ async def _handle_price_poll(job: dict) -> None:
     single_cid = job.get("container_id")
     container_ids = job.get("container_ids")  # optional list of IDs to restrict poll
     include_blacklisted = job.get("include_blacklisted", False)
-    session_id: int | None = job.get("session_id")  # resume existing snapshot
 
     with SessionLocal() as db:
         q = db.query(DimContainer).filter(
@@ -301,10 +334,6 @@ async def _handle_price_poll(job: dict) -> None:
     if not names:
         logger.info("price_poll: no containers to poll")
         return
-
-    # Create snapshot only for bulk jobs (not single-container refresh)
-    if not single_cid and session_id is None:
-        session_id = await _asyncio.wait_for(_asyncio.to_thread(create_session, "price_poll", [n[0] for n in names]), timeout=15)
 
     logger.info("price_poll: polling %d containers", len(names))
     _state.progress_current = 0
@@ -389,6 +418,7 @@ async def _handle_price_poll(job: dict) -> None:
                     _state.last_item_name = name
                     _state.last_item_price = price
                     _state.last_item_volume = volume
+                    _state._current_summary.append({"name": name, "price": int(price), "volume": volume})
                 except Exception as exc:
                     if _is_auth_error(exc):
                         ready = await _wait_for_auth()
@@ -409,13 +439,9 @@ async def _handle_price_poll(job: dict) -> None:
                 break
 
             if _is_emergency_blocked():
-                logger.warning(
-                    "price_poll: stopping — Steam 429 block active, session preserved for resume"
-                )
+                logger.warning("price_poll: stopping — Steam 429 block active")
                 _rate_limited = True
                 break
-            if session_id is not None:
-                await _asyncio.wait_for(_asyncio.to_thread(tick_session, session_id), timeout=15)
 
             # Noise page — every 5–12 items visit a listing page (real browsing signal)
             noise_counter += 1
@@ -438,10 +464,11 @@ async def _handle_price_poll(job: dict) -> None:
     if _rate_limited:
         logger.warning("price_poll: aborted due to Steam 429 — %d items unprocessed", _remaining)
         return
-    if session_id is not None:
-        await _asyncio.wait_for(_asyncio.to_thread(finish_session, session_id), timeout=15)
     logger.info("price_poll: done")
-    await _asyncio.wait_for(_asyncio.to_thread(_run_cache_refresh, "price_poll"), timeout=120)
+    try:
+        await _asyncio.wait_for(_asyncio.to_thread(_run_cache_refresh, "price_poll"), timeout=300)
+    except (TimeoutError, _asyncio.TimeoutError):
+        logger.warning("price_poll: cache refresh timed out (>300s) — skipping, will refresh on next poll")
 
 
 async def _handle_sync_inventory(job: dict) -> None:
@@ -449,7 +476,15 @@ async def _handle_sync_inventory(job: dict) -> None:
         logger.error("sync_inventory: auth timeout — skipping")
         return
     from scrapper.runner import run_inventory_sync
-    await run_inventory_sync(steam_id=job.get("steam_id"))
+    result = await run_inventory_sync(steam_id=job.get("steam_id"))
+    items = result.get("items", 0)
+    matched = result.get("matched_direct", 0) + result.get("matched_fifo", 0)
+    _state.last_job_detail = f"items={items} matched={matched}"
+    _state._current_summary = [{
+        "items": items,
+        "matched_direct": result.get("matched_direct", 0),
+        "matched_fifo": result.get("matched_fifo", 0),
+    }]
 
 
 async def _handle_backfill_history(job: dict) -> None:
@@ -463,20 +498,24 @@ async def _handle_backfill_history(job: dict) -> None:
         logger.warning("backfill_history: skipped — Steam cooldown active until %s", _blocked.cooldown_until)
         return
 
-    def _on_progress(cur: int, tot: int, name: str) -> None:
+    def _on_progress(cur: int, tot: int, name: str, saved: int = 0) -> None:
         if cur == 0:
             _state.progress_current = 0
             _state.progress_total = tot
             _state.progress_started_at = datetime.now(UTC).replace(tzinfo=None)
+            _state.last_item_price = 0.0
+            _state.last_item_volume = 0
         else:
             _state.progress_current = cur
             _state.last_item_name = name
+            _state.last_item_price = 0.0
+            _state.last_item_volume = saved
+            _state._current_summary.append({"name": name, "saved": saved})
 
     from scrapper.runner import run_backfill_history
     try:
         result = await run_backfill_history(
             names=job.get("names"),
-            session_id=job.get("session_id"),
             on_progress=_on_progress,
             should_stop=lambda: _state.cancel_requested,
         )
@@ -489,7 +528,10 @@ async def _handle_backfill_history(job: dict) -> None:
         _state.progress_current = 0
         _state.progress_total = 0
         _state.progress_started_at = None
-    await asyncio.wait_for(asyncio.to_thread(_run_cache_refresh, "backfill_history"), timeout=120)
+    try:
+        await asyncio.wait_for(asyncio.to_thread(_run_cache_refresh, "backfill_history"), timeout=300)
+    except (TimeoutError, asyncio.TimeoutError):
+        logger.warning("backfill_history: cache refresh timed out (>300s) — skipping, will refresh on next poll")
 
 
 _HANDLERS: dict[str, object] = {
@@ -527,6 +569,7 @@ async def _worker_loop() -> None:
         _state.busy = True
         _state.cancel_requested = False
         _state.last_job_detail = ""
+        _state._current_summary = []
         _state.current_type = job_type
         started_at = datetime.now(UTC).replace(tzinfo=None)
         _state.last_job_at = started_at
@@ -562,15 +605,24 @@ async def _worker_loop() -> None:
             )
         finally:
             finished_at = datetime.now(UTC).replace(tzinfo=None)
-            _task_history.appendleft({
-                "type": job_type,
-                "status": _job_status,
-                "started_at": started_at.isoformat(),
-                "finished_at": finished_at.isoformat(),
-                "duration_s": int((finished_at - started_at).total_seconds()),
-                "error": _state.last_error if _job_status != "ok" else None,
-                "detail": _state.last_job_detail or None,
-            })
+            _summary_json = json.dumps(_state._current_summary) if _state._current_summary else None
+            try:
+                from src.domain.connection import SessionLocal as _SL
+                from src.domain.models import TaskHistory as _TH
+                with _SL() as _db:
+                    _db.add(_TH(
+                        job_type=job_type,
+                        status=_job_status,
+                        started_at=started_at,
+                        finished_at=finished_at,
+                        duration_s=int((finished_at - started_at).total_seconds()),
+                        detail=_state.last_job_detail or None,
+                        error=_state.last_error if _job_status != "ok" else None,
+                        summary_json=_summary_json,
+                    ))
+                    _db.commit()
+            except Exception as _he:
+                logger.error("work_queue: failed to persist task history — %s", _he)
             try:
                 from infra.redis_client import get_redis as _get_redis
                 _get_redis().set("cs2:ui:last_task_done", finished_at.isoformat())

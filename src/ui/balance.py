@@ -435,7 +435,24 @@ def render_balance(wallet_balance: float | None, inventory_data: list | None, pa
         style={"backgroundColor": _BG2, "border": f"1px solid {_BORDER}"},
     )
 
-    # ── Transaction groups ────────────────────────────────────────────────────
+    return html.Div(
+        [
+            kpi_row,
+            snapshot_controls,
+            chart_30d,
+            monthly_chart,
+            annual_section,
+            # Groups section rendered separately — updated by groups-refresh-store callback
+            # so group actions (skip/create/link) don't reload the whole balance tab.
+            html.Div(id="balance-groups-content", children=render_groups_section()),
+            tx_section,
+        ]
+    )
+
+
+def render_groups_section() -> dbc.Card:
+    """Render the ГРУППЫ ТРАНЗАКЦИЙ card. Called on initial balance load and on every
+    groups-refresh-store tick so only this section updates, not the whole balance tab."""
     _grp_db = _SessionLocal()
     try:
         all_groups = (
@@ -450,6 +467,8 @@ def render_balance(wallet_balance: float | None, inventory_data: list | None, pa
     finally:
         _grp_db.close()
 
+    now = datetime.now(UTC).replace(tzinfo=None)
+
     def _groups_tab_rows(link_status_val: str) -> list:
         rows = []
         for g, ptg in all_groups:
@@ -458,8 +477,6 @@ def render_balance(wallet_balance: float | None, inventory_data: list | None, pa
                 continue
             dir_color = _GREEN if g.direction.value == "BUY" else _RED
             ban_el: Any = html.Span()
-            from datetime import UTC, datetime
-            now = datetime.now(UTC).replace(tzinfo=None)
             if g.trade_ban_expires_at and g.trade_ban_expires_at > now:
                 diff = g.trade_ban_expires_at - now
                 ban_el = dbc.Badge(
@@ -501,7 +518,7 @@ def render_balance(wallet_balance: float | None, inventory_data: list | None, pa
                                     style={"color": _GREEN, "fontSize": "10px"})
             elif link_status_val == "skipped":
                 link_el = html.Span("SKIPPED", style={"color": _MUTED, "fontSize": "10px",
-                                                        "textDecoration": "line-through"})
+                                                       "textDecoration": "line-through"})
             else:
                 link_el = ban_el
 
@@ -509,10 +526,10 @@ def render_balance(wallet_balance: float | None, inventory_data: list | None, pa
                 html.Td(html.Span(g.direction.value, style={"color": dir_color, "fontWeight": "bold", "fontSize": "10px"})),
                 html.Td(html.Span(g.item_name, style={"color": _TEXT, "fontSize": "12px"})),
                 html.Td(f"×{g.count}", style={"color": _BLUE, "fontWeight": "bold", "textAlign": "center",
-                                               "fontFamily": "monospace"}),
+                                              "fontFamily": "monospace"}),
                 html.Td(f"{g.price:,.0f} ₸", style={"textAlign": "right", "fontFamily": "monospace"}),
                 html.Td(g.date_from.strftime("%m-%d %H:%M"), style={"color": _MUTED, "fontSize": "11px",
-                                                                      "fontFamily": "monospace"}),
+                                                                     "fontFamily": "monospace"}),
                 html.Td(link_el),
                 html.Td(action_btns),
             ], style={"borderBottom": f"1px solid {_BG}"}))
@@ -522,7 +539,7 @@ def render_balance(wallet_balance: float | None, inventory_data: list | None, pa
         )])]
 
     _grp_th = {"color": _MUTED, "fontSize": "10px", "letterSpacing": "1.2px",
-                "textTransform": "uppercase", "backgroundColor": _BG2, "border": "none"}
+               "textTransform": "uppercase", "backgroundColor": _BG2, "border": "none"}
 
     def _groups_table(link_status_val: str) -> dbc.Table:
         return dbc.Table(
@@ -542,11 +559,11 @@ def render_balance(wallet_balance: float | None, inventory_data: list | None, pa
             style={"backgroundColor": _BG, "fontSize": "12px"},
         )
 
-    undef_count  = sum(1 for _, ptg in all_groups if (ptg.link_status if ptg else "undefined") == LinkStatus.undefined)
-    def_count    = sum(1 for _, ptg in all_groups if ptg and ptg.link_status == LinkStatus.defined)
-    skip_count   = sum(1 for _, ptg in all_groups if ptg and ptg.link_status == LinkStatus.skipped)
+    undef_count = sum(1 for _, ptg in all_groups if (ptg.link_status if ptg else "undefined") == LinkStatus.undefined)
+    def_count   = sum(1 for _, ptg in all_groups if ptg and ptg.link_status == LinkStatus.defined)
+    skip_count  = sum(1 for _, ptg in all_groups if ptg and ptg.link_status == LinkStatus.skipped)
 
-    groups_section = dbc.Card(
+    return dbc.Card(
         dbc.CardBody([
             dbc.Row([
                 dbc.Col(
@@ -582,16 +599,4 @@ def render_balance(wallet_balance: float | None, inventory_data: list | None, pa
             ),
         ]),
         style={"backgroundColor": _BG2, "border": f"1px solid {_BORDER}", "marginTop": "16px"},
-    )
-
-    return html.Div(
-        [
-            kpi_row,
-            snapshot_controls,
-            chart_30d,
-            monthly_chart,
-            annual_section,
-            groups_section,
-            tx_section,
-        ]
     )

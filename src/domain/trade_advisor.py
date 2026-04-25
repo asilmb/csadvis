@@ -81,10 +81,11 @@ def compute_trade_advice(
 
     if len(prices_90d) >= 5:
         buy_target = _percentile(prices_90d, 20)
-        sell_target = _percentile(prices_90d, 70)
-        # FLIP-R4: cap sell target relative to buy_target (entry price proxy).
-        # Ensures sell target never drifts far above the actual entry point —
-        # a 4-5% net gain after Steam fee is the goal, not chasing historical highs.
+        # 90th percentile gives enough headroom to cover Steam's 15% fee and
+        # still yield a positive net margin (70th was too close to buy_target).
+        sell_target = _percentile(prices_90d, 90)
+        # Cap prevents chasing historical outliers; raised to 1.40 so the
+        # breakeven spread (~17.25%) + 3% net margin is actually achievable.
         sell_target = min(sell_target, buy_target * settings.flip_sell_target_cap)
     else:
         # Fallback: use baseline with margins

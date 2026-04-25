@@ -107,6 +107,12 @@ def _render_inventory(
         cid = name_to_cid.get(name)
         in_scope = _POLICY.is_in_scope(item_type, cid is not None, name=name)
 
+        if not marketable:
+            logger.info(
+                "[INV] non-marketable item: %r  type=%r  in_scope=%s  in_db=%s",
+                name, item_type, in_scope, cid is not None,
+            )
+
         pd = price_data.get(name, {})
         steam_price = pd.get("current_price")
         price = float(steam_price) if steam_price else float(item.get("price") or 0)

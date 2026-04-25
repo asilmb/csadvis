@@ -37,8 +37,8 @@ class Settings(BaseSettings):
     )
 
     # Flip quality gates — override in .env to tune
-    flip_min_net_margin: float = 0.05  # minimum net margin for flip candidates (5 %)
-    flip_sell_target_cap: float = 1.20  # max sell target as multiple of current price (120 %)
+    flip_min_net_margin: float = 0.03  # minimum net margin for flip candidates (3 %; 5% was unachievable with 15% Steam fee)
+    flip_sell_target_cap: float = 1.40  # max sell target as multiple of buy price (raised from 1.20 to allow margin after 15% Steam fee)
 
     # Liquidity guard — override in .env to tune
     liquidity_min_volume: float = 10.0  # minimum daily units traded for BUY signals to be valid

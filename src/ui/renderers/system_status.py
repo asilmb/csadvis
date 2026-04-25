@@ -89,6 +89,7 @@ def _render_progress(worker: dict) -> list:
     last_name = worker.get("last_item_name", "")
     last_price = worker.get("last_item_price", 0.0)
     last_volume = worker.get("last_item_volume", 0)
+    last_job_detail = worker.get("last_job_detail", "")
     queue_items = worker.get("queue_items", [])
 
     # ── Phase badge ───────────────────────────────────────────────────────────
@@ -180,15 +181,36 @@ def _render_progress(worker: dict) -> list:
             style={"marginTop": "5px"},
         )]
 
-    # ── Last completed item ───────────────────────────────────────────────────
+    # ── Last completed item / job result ─────────────────────────────────────
     last_row = []
-    if last_name:
+    if job_type in ("market_catalog", "sync_inventory"):
+        # Single-shot jobs: show result summary instead of per-item detail
+        if last_job_detail:
+            last_row = [html.Div(
+                [
+                    html.Span("Результат: ", style={"color": _MUTED, "fontSize": "11px"}),
+                    html.Span(last_job_detail, style={"color": _TEXT, "fontSize": "11px"}),
+                ],
+                style={"marginTop": "4px"},
+            )]
+    elif last_name:
+        if job_type == "backfill_history":
+            detail_spans = [
+                html.Span(
+                    f"  +{last_volume} записей" if last_volume else "  нет новых",
+                    style={"color": _GOLD if last_volume else _MUTED, "fontSize": "11px", "marginLeft": "6px"},
+                ),
+            ]
+        else:  # price_poll
+            detail_spans = [
+                html.Span(f"  {last_price:,.0f}₸", style={"color": _GOLD, "fontSize": "11px", "marginLeft": "6px"}),
+                html.Span(f"  vol {last_volume:,}", style={"color": _MUTED, "fontSize": "11px", "marginLeft": "6px"}),
+            ]
         last_row = [html.Div(
             [
                 html.Span("Последний: ", style={"color": _MUTED, "fontSize": "11px"}),
                 html.Span(last_name, style={"color": _TEXT, "fontSize": "11px", "fontWeight": "600"}),
-                html.Span(f"  {last_price:,.0f}₸", style={"color": _GOLD, "fontSize": "11px", "marginLeft": "6px"}),
-                html.Span(f"  vol {last_volume:,}", style={"color": _MUTED, "fontSize": "11px", "marginLeft": "6px"}),
+                *detail_spans,
             ],
             style={"marginTop": "4px"},
         )]
@@ -305,13 +327,14 @@ def render_system_status(health=None) -> html.Div:
                 _group_label("Текущие цены"),
                 _btn_group(
                     dbc.Button("Sync Prices", id="btn-sync-prices", color="info", outline=True, size="sm", n_clicks=0),
+                    dbc.Button("Missing Volume", id="btn-missing-volume", color="info", outline=True, size="sm", n_clicks=0),
                 ),
             ]), width="auto"),
             dbc.Col(html.Div([
                 _group_label("История цен"),
                 _btn_group(
                     dbc.Button("Backfill Позиции", id="btn-backfill-active", color="warning", outline=True, size="sm", n_clicks=0),
-                    dbc.Button("Backfill All *", id="btn-backfill-all", color="warning", outline=True, size="sm", n_clicks=0),
+                    dbc.Button("Missing History", id="btn-backfill-missing", color="warning", outline=True, size="sm", n_clicks=0),
                 ),
             ]), width="auto"),
             dbc.Col(html.Div([
@@ -333,8 +356,9 @@ def render_system_status(health=None) -> html.Div:
         dbc.Tooltip("Загружает актуальный инвентарь Steam", target="btn-sync-inventory", placement="bottom"),
         dbc.Tooltip("Обновляет список контейнеров с рынка Steam", target="btn-sync-catalog", placement="bottom"),
         dbc.Tooltip("Получает текущие цены. Тип определяется фильтром выше (*)", target="btn-sync-prices", placement="bottom"),
+        dbc.Tooltip("Запрашивает цены только для контейнеров без данных об объёме (volume_7d = 0)", target="btn-missing-volume", placement="bottom"),
         dbc.Tooltip("История цен только для контейнеров с открытыми позициями. Фильтр типа не применяется.", target="btn-backfill-active", placement="bottom"),
-        dbc.Tooltip("История цен для выбранного типа контейнеров. Тип определяется фильтром выше (*). По умолчанию — все типы (~2 ч).", target="btn-backfill-all", placement="bottom"),
+        dbc.Tooltip("Загружает историю только для контейнеров с менее чем 5 записями за последние 90 дней", target="btn-backfill-missing", placement="bottom"),
         dbc.Tooltip("Очищает очередь задач воркера", target="btn-clear-queue", placement="bottom"),
         dbc.Tooltip("Проверяет токен и наличие блокировки Steam", target="btn-ping-steam", placement="bottom"),
         dbc.Tooltip("Открыть форму ввода Steam cookie вручную", target="btn-open-cookie-modal", placement="bottom"),
@@ -408,56 +432,6 @@ def render_system_status(health=None) -> html.Div:
             },
         )
 
-    # ── Saved scrape sessions ─────────────────────────────────────────────────
-    def _session_row(s: dict) -> html.Tr:
-        pct = int(s["processed_count"] / s["total_count"] * 100) if s["total_count"] else 0
-        label = "Цены" if s["job_type"] == "price_poll" else "История"
-        return html.Tr([
-            html.Td(label, style={"color": _TEXT, "fontSize": "12px"}),
-            html.Td(
-                f"{s['processed_count']} / {s['total_count']} ({pct}%)",
-                style={"color": _MUTED, "fontSize": "12px"},
-            ),
-            html.Td(s["updated_at"], style={"color": _MUTED, "fontSize": "11px"}),
-            html.Td(html.Div([
-                dbc.Button("Продолжить", id={"type": "btn-session-resume", "index": s["id"]},
-                           color="success", outline=True, size="sm", n_clicks=0,
-                           style={"fontSize": "11px", "marginRight": "4px"}),
-                dbc.Button("Удалить", id={"type": "btn-session-delete", "index": s["id"]},
-                           color="danger", outline=True, size="sm", n_clicks=0,
-                           style={"fontSize": "11px"}),
-            ])),
-        ])
-
-    sessions_section = html.Div([
-        html.H6("Сохранённые сессии", style={"color": _MUTED, "marginBottom": "8px"}),
-        html.Div(
-            dbc.Table(
-                [
-                    html.Thead(html.Tr([
-                        html.Th("Тип", style={"color": _MUTED}),
-                        html.Th("Прогресс", style={"color": _MUTED}),
-                        html.Th("Обновлено", style={"color": _MUTED}),
-                        html.Th("", style={"color": _MUTED}),
-                    ])),
-                    html.Tbody(
-                        [_session_row(s) for s in health.scrape_sessions]
-                        if health.scrape_sessions else [
-                            html.Tr(html.Td(
-                                "Нет сохранённых сессий",
-                                colSpan=4,
-                                style={"color": _MUTED, "textAlign": "center", "fontSize": "12px"},
-                            ))
-                        ]
-                    ),
-                ],
-                bordered=False, size="sm",
-            ),
-            style={**_CARD, "marginBottom": "8px"},
-        ),
-        html.Div(id="session-action-msg", style={"color": _MUTED, "fontSize": "12px", "marginBottom": "16px"}),
-    ])
-
     # ── Task history ──────────────────────────────────────────────────────────
     history = getattr(health, "task_history", [])
 
@@ -476,6 +450,16 @@ def render_system_status(health=None) -> html.Div:
         started = (t.get("started_at") or "")[:16].replace("T", " ")
         detail = t.get("detail") or t.get("error") or ""
         detail_color = _RED if t.get("error") else _MUTED
+        task_id = t.get("id")
+        summary_btn = (
+            dbc.Button(
+                "Summary",
+                id={"type": "btn-task-summary", "index": task_id},
+                color="secondary", outline=True, size="sm", n_clicks=0,
+                style={"fontSize": "10px", "padding": "1px 6px"},
+            )
+            if task_id and t.get("has_summary") else html.Span()
+        )
         return html.Tr([
             html.Td(t.get("type", "?"), style={"color": _TEXT, "fontSize": "12px"}),
             html.Td(status.upper(), style={"color": color, "fontSize": "11px", "fontWeight": "bold"}),
@@ -483,13 +467,25 @@ def render_system_status(health=None) -> html.Div:
             html.Td(_fmt_duration(t.get("duration_s", 0)), style={"color": _MUTED, "fontSize": "11px"}),
             html.Td(
                 detail,
-                style={"color": detail_color, "fontSize": "10px", "maxWidth": "260px",
+                style={"color": detail_color, "fontSize": "10px", "maxWidth": "200px",
                        "overflow": "hidden", "textOverflow": "ellipsis", "whiteSpace": "nowrap"},
             ),
+            html.Td(summary_btn),
         ])
 
     history_section = html.Div([
-        html.H6("История задач", style={"color": _MUTED, "marginBottom": "8px"}),
+        html.Div(
+            [
+                html.H6("История задач", style={"color": _MUTED, "marginBottom": "0", "display": "inline"}),
+                dbc.Button(
+                    [html.I(className="fa fa-trash me-1"), "Очистить"],
+                    id="btn-clear-task-history",
+                    color="danger", outline=True, size="sm", n_clicks=0,
+                    style={"fontSize": "11px", "float": "right"},
+                ),
+            ],
+            style={"marginBottom": "8px", "overflow": "hidden"},
+        ),
         html.Div(
             dbc.Table(
                 [
@@ -499,13 +495,14 @@ def render_system_status(health=None) -> html.Div:
                         html.Th("Запуск", style={"color": _MUTED}),
                         html.Th("Время", style={"color": _MUTED}),
                         html.Th("Детали", style={"color": _MUTED}),
+                        html.Th("", style={"color": _MUTED}),
                     ])),
                     html.Tbody(
                         [_history_row(t) for t in history]
                         if history else [
                             html.Tr(html.Td(
                                 "Нет истории",
-                                colSpan=5,  # 5 columns: type, status, start, duration, detail
+                                colSpan=6,
                                 style={"color": _MUTED, "textAlign": "center", "fontSize": "12px"},
                             ))
                         ]
@@ -524,7 +521,6 @@ def render_system_status(health=None) -> html.Div:
         html.H6("Actions", style={"color": _MUTED, "marginBottom": "8px"}),
         btn_row,
         history_section,
-        sessions_section,
         blacklist_section,
         footer,
     ])

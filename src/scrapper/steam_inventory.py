@@ -105,6 +105,18 @@ class SteamInventoryClient:
         self._client: httpx.AsyncClient | None = None
 
     async def __aenter__(self) -> SteamInventoryClient:
+        # Use Steam credentials if available so that non-tradable/AP items are visible.
+        cookies: dict[str, str] = {}
+        try:
+            from infra.steam_credentials import get_login_secure, get_session_id
+            ls = get_login_secure()
+            si = get_session_id()
+            if ls and si:
+                cookies = {"steamLoginSecure": ls, "sessionid": si}
+                logger.debug("[INV] Using authenticated Steam session for inventory fetch")
+        except Exception:
+            pass  # credentials unavailable — fall back to public (unauthenticated) API
+
         self._client = httpx.AsyncClient(
             headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -113,6 +125,7 @@ class SteamInventoryClient:
                 "Accept": "application/json",
                 "Accept-Language": "en-US,en;q=0.9",
             },
+            cookies=cookies,
             timeout=httpx.Timeout(45.0),
             limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
             follow_redirects=True,
@@ -219,12 +232,14 @@ def _parse_page(data: dict) -> list[dict]:
         key = (str(asset.get("classid", "")), str(asset.get("instanceid", "")))
         desc = desc_map.get(key, {})
 
-        mhn = desc.get("market_hash_name", "")
+        mhn = desc.get("market_hash_name", "") or desc.get("name", "")
         if not mhn:
+            logger.debug(
+                "[INV] Skipping asset %s — no market_hash_name or name (classid=%s)",
+                asset.get("assetid"), asset.get("classid"),
+            )
             continue
 
-        # Skip non-tradable or non-marketable items
-        # (keep them for portfolio value but flag them)
         marketable = int(desc.get("marketable", 0))
         tradable = int(desc.get("tradable", 0))
 

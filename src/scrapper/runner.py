@@ -137,7 +137,6 @@ def _persist_inventory(items: list[dict]):
 
 async def run_backfill_history(
     names: list[str] | None = None,
-    session_id: int | None = None,
     on_progress: object = None,
     should_stop: object = None,
 ) -> dict:
@@ -187,7 +186,6 @@ async def run_backfill_history(
 
     import random as _random
 
-    from infra.scrape_guard import create_session, finish_session, tick_session
     from scrapper.steam.client import _is_emergency_blocked
     from scrapper.steam_rate_limit import human_delay
     ordered_names: list[str] = (
@@ -199,9 +197,6 @@ async def run_backfill_history(
     if on_progress:
         on_progress(0, _total, "")
 
-    if session_id is None:
-        session_id = await asyncio.to_thread(create_session, "backfill_history", ordered_names)
-
     logger.info("backfill_history: processing %d containers", _total)
 
     from datetime import date
@@ -209,6 +204,7 @@ async def run_backfill_history(
     errors = 0
     skipped_empty = 0
     _rate_limited = False
+    _item_saved = 0  # rows saved for the current container (reset each iteration)
 
     # Stealth counters
     noise_counter = 0
@@ -232,6 +228,7 @@ async def run_backfill_history(
                 logger.info("backfill_history: cancelled by request")
                 break
             try:
+                _item_saved = 0
                 cid = id_map[name]
 
                 # Session break — close/reopen TCP connection to avoid long-lived session fingerprint
@@ -314,6 +311,7 @@ async def run_backfill_history(
                         asyncio.to_thread(_save_history_rows, cid, new_rows),
                         timeout=60,
                     )
+                    _item_saved = saved
                     saved_total += saved
                     max_dates[name] = max(r["date"].date() for r in new_rows)
                 except asyncio.TimeoutError:
@@ -322,14 +320,6 @@ async def run_backfill_history(
                 except Exception as exc:
                     logger.error("backfill_history: DB write error for %s — %s", name, exc)
                     errors += 1
-
-                try:
-                    await asyncio.wait_for(
-                        asyncio.to_thread(tick_session, session_id),
-                        timeout=15,
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning("backfill_history: tick_session timed out — continuing")
 
                 # Noise page — visit listing page we just fetched (looks like real browsing)
                 noise_counter += 1
@@ -348,14 +338,13 @@ async def run_backfill_history(
                 await asyncio.sleep(human_delay())
             finally:
                 if on_progress:
-                    on_progress(_idx + 1, _total, name)
+                    on_progress(_idx + 1, _total, name, _item_saved)
     finally:
         await client.__aexit__(None, None, None)
 
     if _rate_limited:
         logger.warning("backfill_history: aborted due to Steam 429 — saved=%d errors=%d skipped_empty=%d", saved_total, errors, skipped_empty)
         return {"status": "rate_limited", "saved": saved_total, "errors": errors, "skipped_empty": skipped_empty}
-    await asyncio.to_thread(finish_session, session_id)
     logger.info("backfill_history: done — saved=%d errors=%d skipped_empty=%d", saved_total, errors, skipped_empty)
     return {"status": "ok", "saved": saved_total, "errors": errors, "skipped_empty": skipped_empty}
 

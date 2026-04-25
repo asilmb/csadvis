@@ -524,35 +524,43 @@ def allocate_portfolio(
 
     # ── Step 1: FLIP candidates ───────────────────────────────────────────────
     flip_candidates: list[dict] = []
+    _flip_rejected: dict[str, int] = {}  # reason → count (diagnostic)
     for c in containers:
-        if str(c.container_name) in _ARMORY_POOL:
+        _name = str(c.container_name)
+        if _name in _ARMORY_POOL:
+            _flip_rejected["armory_pool"] = _flip_rejected.get("armory_pool", 0) + 1
             continue  # managed via Armory Pass — excluded from flip pool
         adv = trade_advice.get(str(c.container_id), {})
         buy_t = adv.get("buy_target", 0)
         sell_t = adv.get("sell_target", 0)
         if not buy_t or not sell_t or buy_t <= 0:
+            _flip_rejected["no_trade_advice"] = _flip_rejected.get("no_trade_advice", 0) + 1
             continue
 
         net_unit = _net(sell_t) - buy_t
         if net_unit <= 0:
+            _flip_rejected["no_profit"] = _flip_rejected.get("no_profit", 0) + 1
             continue
 
-        planned_qty = max(1, int(flip_budget // buy_t))
-        pd_info = price_data.get(str(c.container_name), {})
-
-        # FLIP-R2: recency guard — if current price is below the 20th-percentile buy
-        # target, the 90-day history window no longer reflects current market conditions.
+        pd_info = price_data.get(_name, {})
         current_price_now = pd_info.get("current_price") or 0
-        if current_price_now < buy_t:
-            continue  # stale history — current price below historical buy target
+
+        # Use actual current market price as buy price when available.
+        # If current_price < buy_t, it's a buying opportunity (price dipped below
+        # historical floor) — still a valid flip candidate.
+        effective_buy = current_price_now if current_price_now > 0 else buy_t
+
+        planned_qty = max(1, int(flip_budget // effective_buy))
         weekly_vol = pd_info.get("quantity", 0) or 0
         _history_for_lc = price_history.get(str(c.container_id), [])
         prices_30d = _prices_in_window(_history_for_lc, 30)
         vol_30d = _volatility(prices_30d)
         if vol_30d is None:
+            _flip_rejected["no_volatility_data"] = _flip_rejected.get("no_volatility_data", 0) + 1
             continue  # insufficient price history for flip assessment
 
-        # Lifecycle gate — skip NEW and LEGACY stages for flip
+        # Lifecycle gate — only skip truly NEW (no data) or DEAD stages for flip.
+        # LEGACY cases can still be viable flips if they have volume and volatility.
         _lc_all_prices = [float(h["price"]) for h in _history_for_lc if h.get("price")]
         _lc_first_date = _earliest_date(_history_for_lc)
         if _lc_first_date is not None and _lc_all_prices:
@@ -565,27 +573,41 @@ def allocate_portfolio(
                 vol_30d_avg=_lc_vol_30d_avg,
                 all_time_prices=_lc_all_prices,
             )
-            if not is_flip_eligible(_lc_stage):
-                continue  # NEW (speculative), LEGACY (invest-only), or DEAD
+            # Only exclude NEW (speculation) and DEAD (no volume); LEGACY is allowed
+            if _lc_stage in ("NEW", "DEAD"):
+                _flip_rejected[f"lifecycle_{_lc_stage}"] = _flip_rejected.get(f"lifecycle_{_lc_stage}", 0) + 1
+                continue
 
         # Float: avg daily volume (proxy for liquidity)
         avg_daily_vol = weekly_vol / 7 if weekly_vol else 0.0
 
         # Bid-ask spread (if lowest_price available from DB)
-        median_p = pd_info.get("current_price") or buy_t
+        median_p = effective_buy
         lowest_p = pd_info.get("lowest_price")
         spread_pct = 0.0
         if lowest_p and median_p > 0 and lowest_p < median_p:
             spread_pct = (median_p - lowest_p) / median_p
 
         if vol_30d < _VOLATILITY_MIN_FLIP or vol_30d > _VOLATILITY_MAX_FLIP:
+            _flip_rejected["volatility_out_of_range"] = _flip_rejected.get("volatility_out_of_range", 0) + 1
+            logger.debug("FLIP skip %r: vol_30d=%.3f (range %.2f–%.2f)", _name, vol_30d, _VOLATILITY_MIN_FLIP, _VOLATILITY_MAX_FLIP)
             continue  # outside flip range: dead asset (<5%) or too chaotic (>30%)
         if avg_daily_vol < _LIQUIDITY_MIN_DAILY:
+            _flip_rejected["low_liquidity"] = _flip_rejected.get("low_liquidity", 0) + 1
+            logger.debug("FLIP skip %r: avg_daily_vol=%.1f < %d", _name, avg_daily_vol, _LIQUIDITY_MIN_DAILY)
             continue  # absolute liquidity floor — less than 1000 sales/day → skip
         if avg_daily_vol * 7 < planned_qty * 2:
+            _flip_rejected["cant_absorb_position"] = _flip_rejected.get("cant_absorb_position", 0) + 1
             continue  # market cannot absorb position in 7 days with 2x safety factor
         if spread_pct > _SPREAD_MAX_FLIP:
+            _flip_rejected["spread_too_wide"] = _flip_rejected.get("spread_too_wide", 0) + 1
             continue  # bid-ask spread too wide
+
+        # Recompute net_unit using effective_buy (actual market price)
+        net_unit = _net(sell_t) - effective_buy
+        if net_unit <= 0:
+            _flip_rejected["no_profit"] = _flip_rejected.get("no_profit", 0) + 1
+            continue
 
         # WALL-1: order book filter — exclude if sell wall is too deep to exit in time
         cid_str = str(c.container_id)
@@ -610,26 +632,23 @@ def allocate_portfolio(
                 )
                 continue
 
-        unit_margin_pct = net_unit / buy_t
+        unit_margin_pct = net_unit / effective_buy
         if unit_margin_pct < settings.flip_min_net_margin:
+            _flip_rejected["below_min_margin"] = _flip_rejected.get("below_min_margin", 0) + 1
             continue  # net margin below minimum threshold after Steam fee
 
         actual_qty = min(planned_qty, max(1, weekly_vol))
-        budget_used = actual_qty * buy_t
+        budget_used = actual_qty * effective_buy
 
         # Time-adjusted weekly ROI — Steam 7-day trade ban is the minimum hold period.
-        # queue_days: expected time to sell `actual_qty` units at avg daily market volume.
-        # effective_hold_days = 7 (trade ban) + queue_days (sell queue).
-        # weekly_roi normalises unit_margin_pct to a 7-day base, enabling fair comparison
-        # across containers with different liquidity (avoids vol_factor distortion).
         queue_days = actual_qty / avg_daily_vol if avg_daily_vol > 0 else 999.0
         effective_hold_days = 7.0 + queue_days
-        # Spread factor: tighter spread = better (1.0 = no spread penalty)
         spread_factor = 1.0 - spread_pct
         weekly_roi = unit_margin_pct / (effective_hold_days / 7.0)
         flip_score = weekly_roi * (1.0 - vol_30d) * spread_factor
 
         if flip_score <= 0:
+            _flip_rejected["zero_score"] = _flip_rejected.get("zero_score", 0) + 1
             continue
 
         flip_candidates.append(
@@ -637,7 +656,7 @@ def allocate_portfolio(
                 "name": str(c.container_name),
                 "container_id": str(c.container_id),
                 "qty": actual_qty,
-                "buy_price": int(buy_t),
+                "buy_price": int(effective_buy),
                 "sell_price": int(sell_t),
                 "net_per_unit": round(net_unit),
                 "expected_net_total": round(net_unit * actual_qty),
@@ -647,7 +666,7 @@ def allocate_portfolio(
                 "volatility_pct": round(vol_30d * 100, 1),
                 "spread_pct": round(spread_pct * 100, 1),
                 "budget_used": round(budget_used),
-                "net_margin_pct": adv.get("net_margin_pct", 0),
+                "net_margin_pct": round(unit_margin_pct * 100, 1),
                 "effective_hold_days": round(effective_hold_days, 1),
                 # WALL-1 order book metrics (0/0.0 when order_book_data not provided)
                 "volume_to_target": _wall_metrics.get("volume_to_target", 0),
@@ -658,6 +677,9 @@ def allocate_portfolio(
 
     flip_candidates.sort(key=lambda x: x["flip_score"], reverse=True)
     best_flip = flip_candidates[0] if flip_candidates else None
+    if _flip_rejected:
+        logger.info("[FLIP] %d candidates passed, rejected by reason: %s",
+                    len(flip_candidates), _flip_rejected)
 
     # ── Step 2: INVEST candidates (Net CAGR) ─────────────────────────────────
     invest_candidates: list[dict] = []

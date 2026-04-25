@@ -186,6 +186,18 @@ def _position_card(p: InvestmentPosition, current_price: float | None) -> dbc.Ca
                         ),
                     ]
                 ),
+                # Action row
+                html.Div(
+                    dbc.Button(
+                        [html.I(className="fa fa-trash me-1"), "Удалить"],
+                        id={"type": "btn-pos-delete", "pos_id": p.id},
+                        size="sm",
+                        color="danger",
+                        outline=True,
+                        n_clicks=0,
+                        style={"fontSize": "10px", "marginTop": "8px"},
+                    ),
+                ),
             ],
             style={"padding": "10px 14px"},
         ),
@@ -219,6 +231,12 @@ def _render_positions_section(positions_with_price: list, label: str) -> html.Di
 
 def _armorypass_card(p: InvestmentPosition, current_price: float | None) -> dbc.Card:
     """Render one Armory Pass position card with editable progress."""
+    import json as _j
+    try:
+        linked_ids = _j.loads(p.linked_asset_ids or "[]")
+    except Exception:
+        linked_ids = []
+    linked_count = len(linked_ids)
     pct = (p.current_count / p.fixation_count * 100) if p.fixation_count else 0
     net_per_unit = round(current_price / 1.15 - 5, 0) if current_price else None
     net_total = net_per_unit * p.current_count if net_per_unit else None
@@ -306,6 +324,33 @@ def _armorypass_card(p: InvestmentPosition, current_price: float | None) -> dbc.
                                 id={"type": "ap-pos-reset", "pos_id": p.id},
                                 size="sm",
                                 color="secondary",
+                                outline=True,
+                                n_clicks=0,
+                                style={"fontSize": "11px"},
+                            ),
+                            width="auto",
+                        ),
+                        dbc.Col(
+                            dbc.Button(
+                                [
+                                    html.I(className="fa fa-link me-1"),
+                                    f"Инвентарь ({linked_count}/{p.fixation_count})",
+                                ],
+                                id={"type": "ap-pos-link-inv", "pos_id": p.id},
+                                size="sm",
+                                color="info" if linked_count == p.fixation_count else "warning",
+                                outline=True,
+                                n_clicks=0,
+                                style={"fontSize": "11px"},
+                            ),
+                            width="auto",
+                        ),
+                        dbc.Col(
+                            dbc.Button(
+                                [html.I(className="fa fa-trash me-1"), "Удалить"],
+                                id={"type": "btn-pos-delete", "pos_id": p.id},
+                                size="sm",
+                                color="danger",
                                 outline=True,
                                 n_clicks=0,
                                 style={"fontSize": "11px"},
@@ -433,6 +478,113 @@ def _pfrow(label: str, value: str, sub: str = "", color: str = _TEXT) -> html.Di
             html.Span(sub, style={"color": _MUTED, "fontSize": "11px"}),
         ],
         style={"marginBottom": "5px"},
+    )
+
+
+_RANK_LABELS = ["#1  ЛУЧШИЙ", "#2", "#3", "#4"]
+_RANK_COLORS = [_GOLD, _TEXT, _MUTED, _MUTED]
+
+
+def _flip_candidate_card(c: dict, rank: int, show_create_btn: bool = False) -> dbc.Card:
+    """Compact flip candidate card for 2×2 grid."""
+    is_top = rank == 1
+    border_col = _ORANGE if is_top else _BORDER
+    return dbc.Card(
+        dbc.CardBody([
+            html.Div([
+                html.Span(
+                    _RANK_LABELS[rank - 1],
+                    style={"color": _RANK_COLORS[rank - 1], "fontSize": "9px",
+                           "letterSpacing": "1.5px", "fontWeight": "bold"},
+                ),
+                html.Br(),
+                item_link(c["name"], font_size="12px"),
+            ], style={"marginBottom": "8px"}),
+            dbc.Row([
+                dbc.Col([
+                    html.Div("МАРЖА", style={"color": _MUTED, "fontSize": "9px", "letterSpacing": "1px"}),
+                    html.Div(f"+{c['net_margin_pct']:.0f}%",
+                             style={"color": _GREEN, "fontWeight": "bold", "fontSize": "16px"}),
+                ], width=6),
+                dbc.Col([
+                    html.Div("SCORE", style={"color": _MUTED, "fontSize": "9px", "letterSpacing": "1px"}),
+                    html.Div(f"{c['flip_score']:.4f}",
+                             style={"color": _GOLD, "fontWeight": "bold", "fontSize": "16px"}),
+                ], width=6),
+            ], className="mb-2"),
+            dbc.Row([
+                dbc.Col([
+                    html.Div("ОБЪ/НЕД", style={"color": _MUTED, "fontSize": "9px", "letterSpacing": "1px"}),
+                    html.Div(f"{c['weekly_volume']} шт.",
+                             style={"color": _TEXT, "fontSize": "11px"}),
+                ], width=6),
+                dbc.Col([
+                    html.Div("СПРЕД", style={"color": _MUTED, "fontSize": "9px", "letterSpacing": "1px"}),
+                    html.Div(f"{c.get('spread_pct', 0):.1f}%",
+                             style={"color": _GREEN if c.get("spread_pct", 0) < 8 else _YELLOW,
+                                    "fontSize": "11px"}),
+                ], width=6),
+            ]),
+            *([dbc.Button(
+                [html.I(className="fa fa-plus me-1"), "Создать позицию"],
+                id="btn-create-flip-position",
+                size="sm", color="success", outline=True, n_clicks=0,
+                style={"fontSize": "10px", "marginTop": "8px", "width": "100%"},
+            )] if show_create_btn else []),
+        ], style={"padding": "10px"}),
+        style={"backgroundColor": _BG2, "border": f"1px solid {border_col}", "height": "100%"},
+    )
+
+
+def _invest_candidate_card(c: dict, rank: int, show_create_btn: bool = False) -> dbc.Card:
+    """Compact invest candidate card for 2×2 grid."""
+    is_top = rank == 1
+    border_col = _GREEN if is_top else _BORDER
+    return dbc.Card(
+        dbc.CardBody([
+            html.Div([
+                html.Span(
+                    _RANK_LABELS[rank - 1],
+                    style={"color": _RANK_COLORS[rank - 1], "fontSize": "9px",
+                           "letterSpacing": "1.5px", "fontWeight": "bold"},
+                ),
+                html.Br(),
+                item_link(c["name"], font_size="12px"),
+            ], style={"marginBottom": "8px"}),
+            dbc.Row([
+                dbc.Col([
+                    html.Div("CAGR", style={"color": _MUTED, "fontSize": "9px", "letterSpacing": "1px"}),
+                    html.Div(f"{c['cagr_pct']:+.1f}%",
+                             style={"color": _GREEN if c["cagr_pct"] >= 15 else _YELLOW,
+                                    "fontWeight": "bold", "fontSize": "16px"}),
+                ], width=6),
+                dbc.Col([
+                    html.Div("ВОЛАТ.", style={"color": _MUTED, "fontSize": "9px", "letterSpacing": "1px"}),
+                    html.Div(f"{c['volatility_pct']:.1f}%",
+                             style={"color": _GREEN if c["volatility_pct"] < 20 else _YELLOW,
+                                    "fontWeight": "bold", "fontSize": "16px"}),
+                ], width=6),
+            ], className="mb-2"),
+            dbc.Row([
+                dbc.Col([
+                    html.Div("ИСТОРИЯ", style={"color": _MUTED, "fontSize": "9px", "letterSpacing": "1px"}),
+                    html.Div(f"{c['history_years']:.1f} лет",
+                             style={"color": _TEXT, "fontSize": "11px"}),
+                ], width=6),
+                dbc.Col([
+                    html.Div("SCORE", style={"color": _MUTED, "fontSize": "9px", "letterSpacing": "1px"}),
+                    html.Div(f"{c['invest_score']:.4f}",
+                             style={"color": _GOLD, "fontSize": "11px"}),
+                ], width=6),
+            ]),
+            *([dbc.Button(
+                [html.I(className="fa fa-plus me-1"), "Создать позицию"],
+                id="btn-create-invest-position",
+                size="sm", color="success", outline=True, n_clicks=0,
+                style={"fontSize": "10px", "marginTop": "8px", "width": "100%"},
+            )] if show_create_btn else []),
+        ], style={"padding": "10px"}),
+        style={"backgroundColor": _BG2, "border": f"1px solid {border_col}", "height": "100%"},
     )
 
 
@@ -732,203 +884,53 @@ def _render_portfolio(
             ]
         )
     else:
+        top4_flips = plan["top_flips"][:4]
+        # Build 2×2 grid — pad with None if fewer than 4 candidates
+        while len(top4_flips) < 4:
+            top4_flips.append(None)
+
+        def _flip_col(cand, rank):
+            if cand is None:
+                return dbc.Col(width=6)
+            return dbc.Col(_flip_candidate_card(cand, rank, show_create_btn=(rank == 1)), width=6,
+                           style={"marginBottom": "8px"})
+
+        flip_grid = html.Div([
+            dbc.Row([_flip_col(top4_flips[0], 1), _flip_col(top4_flips[1], 2)],
+                    className="g-2 mb-2"),
+            dbc.Row([_flip_col(top4_flips[2], 3), _flip_col(top4_flips[3], 4)],
+                    className="g-2"),
+        ], style={"marginBottom": "12px"})
+
+        # Detail strip for top candidate (buy/sell/profit summary)
         f = plan["flip"]
-        flip_card = dbc.Card(
+        flip_detail = dbc.Card(
             dbc.CardBody(
-                [
-                    dbc.Row(
-                        [
-                            dbc.Col(
-                                [
-                                    item_link(
-                                        f["name"],
-                                        color=_GOLD,
-                                        font_size="15px",
-                                    ),
-                                    html.Div(
-                                        "Лучший кандидат для флипа",
-                                        style={
-                                            "color": _MUTED,
-                                            "fontSize": "11px",
-                                            "marginBottom": "12px",
-                                        },
-                                    ),
-                                    _pfrow(
-                                        "Покупать",
-                                        f"{f['qty']} шт. × {settings.currency_symbol}{f['buy_price']:.2f}",
-                                        f"= {int(f['buy_price'] * f['qty']):,} {settings.currency_symbol} total",
-                                        _GREEN,
-                                    ),
-                                    _pfrow(
-                                        "Продавать",
-                                        f"{settings.currency_symbol}{f['sell_price']:.2f} / шт.",
-                                        f"{int(f['sell_price']):,} {settings.currency_symbol}",
-                                        _ORANGE,
-                                    ),
-                                    _pfrow(
-                                        "Чистыми/шт.",
-                                        f"{settings.currency_symbol}{f['net_per_unit']:.2f}",
-                                        f"{int(f['net_per_unit']):,} {settings.currency_symbol}",
-                                        _GREEN,
-                                    ),
-                                    _pfrow(
-                                        "Итого профит:",
-                                        f"{settings.currency_symbol}{f['expected_net_total']:.2f}",
-                                        f"{int(f['expected_net_total']):,} {settings.currency_symbol}",
-                                        _GREEN,
-                                    ),
-                                ],
-                                width=6,
-                            ),
-                            dbc.Col(
-                                [
-                                    html.Div(
-                                        "МЕТРИКИ",
-                                        style={
-                                            "color": _MUTED,
-                                            "fontSize": "10px",
-                                            "letterSpacing": "1.5px",
-                                            "marginBottom": "8px",
-                                        },
-                                    ),
-                                    _pfrow(
-                                        "Маржа (net)",
-                                        f"{f['net_margin_pct']:+.1f}%",
-                                        "после Steam 15%",
-                                        _GREEN if f["net_margin_pct"] >= 10 else _YELLOW,
-                                    ),
-                                    _pfrow(
-                                        "Объём/неделю",
-                                        str(f["weekly_volume"]) + " шт.",
-                                        "7-day volume",
-                                        _TEXT,
-                                    ),
-                                    _pfrow(
-                                        "Волатильность",
-                                        f"{f['volatility_pct']:.1f}%",
-                                        "30d std/mean",
-                                        _GREEN if f["volatility_pct"] < 8 else _YELLOW,
-                                    ),
-                                    _pfrow(
-                                        "Bid-ask spread",
-                                        f"{f.get('spread_pct', 0):.1f}%",
-                                        "узкий = хорошо для выхода",
-                                        _GREEN if f.get("spread_pct", 0) < 8 else _YELLOW,
-                                    ),
-                                    _pfrow(
-                                        "Ликвидность",
-                                        f"{f.get('avg_daily_vol', 0):.1f} шт/день",
-                                        "средний дневной объём",
-                                        _TEXT,
-                                    ),
-                                    _pfrow(
-                                        "Flip score",
-                                        f"{f['flip_score']:.4f}",
-                                        "выше = лучше",
-                                        _GOLD,
-                                    ),
-                                    # WALL-1: order book metrics
-                                    _pfrow(
-                                        "Объём до цели",
-                                        f"{f.get('volume_to_target', 0):,} шт.",
-                                        "лоты в стене до target",
-                                        _RED
-                                        if f.get("volume_to_target", 0) > 200
-                                        else _YELLOW
-                                        if f.get("volume_to_target", 0) > 50
-                                        else _MUTED,
-                                    ),
-                                    _pfrow(
-                                        "Дней выхода",
-                                        f"{f.get('estimated_days', 0.0):.1f} дн.",
-                                        "объём / avg_daily_vol",
-                                        _GREEN
-                                        if f.get("estimated_days", 0.0) <= 3
-                                        else _YELLOW
-                                        if f.get("estimated_days", 0.0) <= 7
-                                        else _RED,
-                                    ),
-                                    _pfrow(
-                                        "Безубыток",
-                                        f"{int(f['buy_price'] * 1.15):,} {settings.currency_symbol}",
-                                        "покупка × 1.15 (Steam fee)",
-                                        _TEXT,
-                                    ),
-                                    _pfrow(
-                                        "Лучший bid",
-                                        f"{f.get('best_buy_order', 0):,} {settings.currency_symbol}"
-                                        if f.get("best_buy_order", 0) > 0
-                                        else "—",
-                                        "цена немедленной ликвидации",
-                                        _TEXT if f.get("best_buy_order", 0) > 0 else _MUTED,
-                                    ),
-                                    html.Div(
-                                        "Трейд-бан 7 дней после покупки на Steam Market",
-                                        style={
-                                            "color": _MUTED,
-                                            "fontSize": "10px",
-                                            "marginTop": "12px",
-                                            "fontStyle": "italic",
-                                        },
-                                    ),
-                                ],
-                                width=6,
-                            ),
-                        ]
-                    ),
-                ]
+                dbc.Row([
+                    dbc.Col(_pfrow("Покупать",
+                                   f"{f['qty']} шт. × {settings.currency_symbol}{f['buy_price']:.2f}",
+                                   f"= {int(f['buy_price'] * f['qty']):,} {settings.currency_symbol}",
+                                   _GREEN), width=3),
+                    dbc.Col(_pfrow("Продавать",
+                                   f"{settings.currency_symbol}{f['sell_price']:.2f} / шт.",
+                                   f"target", _ORANGE), width=3),
+                    dbc.Col(_pfrow("Чистыми/шт.",
+                                   f"{settings.currency_symbol}{f['net_per_unit']:.2f}",
+                                   "после Steam 15%", _GREEN), width=3),
+                    dbc.Col(_pfrow("Итого профит",
+                                   f"{int(f['expected_net_total']):,} {settings.currency_symbol}",
+                                   f"выход ~{f.get('estimated_days', 0):.1f} дн.", _GREEN), width=3),
+                ])
             ),
-            style={
-                "backgroundColor": _BG2,
-                "border": f"1px solid {_ORANGE}",
-                "marginBottom": "8px",
-            },
+            style={"backgroundColor": _BG2, "border": f"1px solid {_ORANGE}33", "marginBottom": "8px"},
         )
 
-        alt_flips = plan["top_flips"][1:5]
-        alt_els = []
-        if alt_flips:
-            alt_els = [
-                html.Div(
-                    "Альтернативы:",
-                    style={"color": _MUTED, "fontSize": "10px", "marginBottom": "4px"},
-                ),
-            ] + [
-                html.Span(
-                    f"{a['name']} (score {a['flip_score']:.4f}, +{a['net_margin_pct']:.0f}%)",
-                    style={"color": _MUTED, "fontSize": "11px", "display": "block"},
-                )
-                for a in alt_flips
-            ]
-
-        flip_actions = html.Div(
-            [
-                dbc.Button(
-                    [html.I(className="fa fa-eye me-1"), "Контрольная проверка"],
-                    id={"type": "btn-control-check", "position_type": "flip"},
-                    size="sm", color="info", outline=True, n_clicks=0,
-                    style={"fontSize": "11px", "marginRight": "6px"},
-                ),
-                dbc.Button(
-                    [html.I(className="fa fa-plus me-1"), "Создать позицию"],
-                    id="btn-create-flip-position",
-                    size="sm", color="success", outline=True, n_clicks=0,
-                    style={"fontSize": "11px"},
-                ),
-                html.Div(id="control-check-flip-output", style={"marginTop": "6px"}),
-            ],
-            style={"marginTop": "8px", "marginBottom": "8px"},
-        )
-
-        flip_section = html.Div(
-            [
-                flip_header,
-                flip_card,
-                flip_actions,
-                html.Div(alt_els, style={"paddingLeft": "8px", "marginBottom": "8px"}),
-                _render_positions_section(flip_positions, f"Ваши флип-позиции · {len(flip_positions)}"),
-            ]
-        )
+        flip_section = html.Div([
+            flip_header,
+            flip_grid,
+            flip_detail,
+            _render_positions_section(flip_positions, f"Ваши флип-позиции · {len(flip_positions)}"),
+        ])
 
     sections.append(flip_section)
 
@@ -962,138 +964,51 @@ def _render_portfolio(
         )
     else:
         iv = plan["invest"]
-        invest_card = dbc.Card(
+        top4_invests = plan["top_invests"][:4]
+        while len(top4_invests) < 4:
+            top4_invests.append(None)
+
+        def _inv_col(cand, rank):
+            if cand is None:
+                return dbc.Col(width=6)
+            return dbc.Col(_invest_candidate_card(cand, rank, show_create_btn=(rank == 1)), width=6,
+                           style={"marginBottom": "8px"})
+
+        invest_grid = html.Div([
+            dbc.Row([_inv_col(top4_invests[0], 1), _inv_col(top4_invests[1], 2)],
+                    className="g-2 mb-2"),
+            dbc.Row([_inv_col(top4_invests[2], 3), _inv_col(top4_invests[3], 4)],
+                    className="g-2"),
+        ], style={"marginBottom": "12px"})
+
+        # Detail strip for top candidate
+        invest_detail = dbc.Card(
             dbc.CardBody(
-                [
-                    dbc.Row(
-                        [
-                            dbc.Col(
-                                [
-                                    item_link(
-                                        iv["name"],
-                                        color=_GOLD,
-                                        font_size="15px",
-                                    ),
-                                    html.Div(
-                                        "CS2 золото — лучший долгосрочный актив",
-                                        style={
-                                            "color": _MUTED,
-                                            "fontSize": "11px",
-                                            "marginBottom": "12px",
-                                        },
-                                    ),
-                                    _pfrow(
-                                        "Покупать",
-                                        f"{iv['qty']} шт. × {settings.currency_symbol}{iv['buy_price']:.2f}",
-                                        f"= {int(iv['buy_price'] * iv['qty']):,} {settings.currency_symbol}",
-                                        _GREEN,
-                                    ),
-                                    _pfrow("Бюджет", _fmt_amount(iv["budget_used"]), "", _GREEN),
-                                    _pfrow(
-                                        "История",
-                                        f"{iv['history_years']} лет",
-                                        "данных Steam Market",
-                                        _TEXT,
-                                    ),
-                                ],
-                                width=6,
-                            ),
-                            dbc.Col(
-                                [
-                                    html.Div(
-                                        "МЕТРИКИ",
-                                        style={
-                                            "color": _MUTED,
-                                            "fontSize": "10px",
-                                            "letterSpacing": "1.5px",
-                                            "marginBottom": "8px",
-                                        },
-                                    ),
-                                    _pfrow(
-                                        "CAGR",
-                                        f"{iv['cagr_pct']:+.1f}% / год",
-                                        "среднегодовой рост",
-                                        _GREEN if iv["cagr_pct"] >= 15 else _YELLOW,
-                                    ),
-                                    _pfrow(
-                                        "Волатильность",
-                                        f"{iv['volatility_pct']:.1f}%",
-                                        "180d std/mean",
-                                        _GREEN if iv["volatility_pct"] < 20 else _YELLOW,
-                                    ),
-                                    _pfrow(
-                                        "Invest score",
-                                        f"{iv['invest_score']:.4f}",
-                                        "CAGR × (1 − vol)",
-                                        _GOLD,
-                                    ),
-                                    html.Div(
-                                        "Держать минимум 6–12 месяцев. Не трогать при краткосрочных просадках.",
-                                        style={
-                                            "color": _MUTED,
-                                            "fontSize": "10px",
-                                            "marginTop": "12px",
-                                            "fontStyle": "italic",
-                                        },
-                                    ),
-                                ],
-                                width=6,
-                            ),
-                        ]
-                    ),
-                ]
+                dbc.Row([
+                    dbc.Col(_pfrow("Покупать",
+                                   f"{iv['qty']} шт. × {settings.currency_symbol}{iv['buy_price']:.2f}",
+                                   f"= {int(iv['buy_price'] * iv['qty']):,} {settings.currency_symbol}",
+                                   _GREEN), width=3),
+                    dbc.Col(_pfrow("Бюджет", _fmt_amount(iv["budget_used"]), "", _GREEN), width=3),
+                    dbc.Col(_pfrow("История",
+                                   f"{iv['history_years']} лет",
+                                   "данных Steam Market", _TEXT), width=3),
+                    dbc.Col(html.Div(
+                        "Держать минимум 6–12 мес.",
+                        style={"color": _MUTED, "fontSize": "10px", "fontStyle": "italic",
+                               "paddingTop": "8px"},
+                    ), width=3),
+                ])
             ),
-            style={
-                "backgroundColor": _BG2,
-                "border": f"1px solid {_GREEN}",
-                "marginBottom": "8px",
-            },
+            style={"backgroundColor": _BG2, "border": f"1px solid {_GREEN}33", "marginBottom": "8px"},
         )
 
-        alt_invs = plan["top_invests"][1:5]
-        alt_inv_els = []
-        if alt_invs:
-            alt_inv_els = [
-                html.Div(
-                    "Альтернативы:",
-                    style={"color": _MUTED, "fontSize": "10px", "marginBottom": "4px"},
-                ),
-            ] + [
-                html.Span(
-                    f"{a['name']} (CAGR {a['cagr_pct']:+.1f}%, vol {a['volatility_pct']:.1f}%)",
-                    style={"color": _MUTED, "fontSize": "11px", "display": "block"},
-                )
-                for a in alt_invs
-            ]
-
-        invest_actions = html.Div(
-            [
-                dbc.Button(
-                    [html.I(className="fa fa-eye me-1"), "Контрольная проверка"],
-                    id={"type": "btn-control-check", "position_type": "invest"},
-                    size="sm", color="info", outline=True, n_clicks=0,
-                    style={"fontSize": "11px", "marginRight": "6px"},
-                ),
-                dbc.Button(
-                    [html.I(className="fa fa-plus me-1"), "Создать позицию"],
-                    id="btn-create-invest-position",
-                    size="sm", color="success", outline=True, n_clicks=0,
-                    style={"fontSize": "11px"},
-                ),
-                html.Div(id="control-check-invest-output", style={"marginTop": "6px"}),
-            ],
-            style={"marginTop": "8px", "marginBottom": "8px"},
-        )
-
-        inv_section = html.Div(
-            [
-                inv_header,
-                invest_card,
-                invest_actions,
-                html.Div(alt_inv_els, style={"paddingLeft": "8px", "marginBottom": "8px"}),
-                _render_positions_section(invest_positions, f"Ваши инвест-позиции · {len(invest_positions)}"),
-            ]
-        )
+        inv_section = html.Div([
+            inv_header,
+            invest_grid,
+            invest_detail,
+            _render_positions_section(invest_positions, f"Ваши инвест-позиции · {len(invest_positions)}"),
+        ])
 
     sections.append(inv_section)
 

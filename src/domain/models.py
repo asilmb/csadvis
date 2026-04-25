@@ -497,6 +497,7 @@ class InvestmentPosition(Base):
     )
     closed_at = Column(DateTime, nullable=True)
     balance_influence = Column(Float, nullable=True)   # actual result after closing
+    linked_asset_ids = Column(Text, nullable=False, default="[]")  # JSON list of Steam asset_ids
 
     container = relationship("DimContainer")
 
@@ -557,15 +558,19 @@ class RateLimitLog(Base):
     triggered_by = Column(String(200), nullable=True)
 
 
-class ScrapeSession(Base):
-    """Persistent snapshot of an in-progress price_poll or backfill_history job."""
+class TaskHistory(Base):
+    """Permanent record of every completed work-queue job with per-item summary."""
 
-    __tablename__ = "scrape_sessions"
+    __tablename__ = "task_history"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    job_type = Column(String(50), nullable=False)       # 'price_poll' | 'backfill_history'
-    all_ids = Column(Text, nullable=False)              # JSON array — shuffled order at job start
-    processed_count = Column(Integer, nullable=False, default=0)
-    total_count = Column(Integer, nullable=False)
-    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(UTC).replace(tzinfo=None))
-    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(UTC).replace(tzinfo=None))
+    job_type = Column(String(50), nullable=False)
+    status = Column(String(20), nullable=False)          # ok | error | cancelled
+    started_at = Column(DateTime, nullable=False)
+    finished_at = Column(DateTime, nullable=False)
+    duration_s = Column(Integer, nullable=False, default=0)
+    detail = Column(String(500), nullable=True)          # short human-readable result
+    error = Column(String(500), nullable=True)
+    summary_json = Column(Text, nullable=True)           # JSON — per-item results
+
+

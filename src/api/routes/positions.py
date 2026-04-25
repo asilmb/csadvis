@@ -56,9 +56,18 @@ from src.domain.position_service import (
     unlink_group,
 )
 
+import json as _json
+
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/positions", tags=["positions"])
+
+
+def _json_loads_safe(val: str | None) -> list:
+    try:
+        return _json.loads(val or "[]")
+    except Exception:
+        return []
 get_db = get_db_dep
 
 
@@ -96,6 +105,13 @@ class CreateArmoryPassPositionRequest(BaseModel):
 
 class UpdateProgressRequest(BaseModel):
     current_count: int = Field(ge=0)
+
+
+class UpdateAssetsRequest(BaseModel):
+    asset_ids: list[str]
+
+
+AP_MAX_POSITIONS = 5
 
 
 def _group_to_dict(
@@ -136,8 +152,9 @@ def _position_to_dict(
         "status":            position.status,
         "opened_at":         position.opened_at.isoformat(),
         "closed_at":         position.closed_at.isoformat() if position.closed_at else None,
-        "balance_influence": position.balance_influence,
-        "current_price":     current_price,
+        "balance_influence":  position.balance_influence,
+        "current_price":      current_price,
+        "linked_asset_ids":   _json_loads_safe(position.linked_asset_ids),
     }
 
 
@@ -381,6 +398,18 @@ def create_armorypass_position_endpoint(
     if body.stars_per_case > body.stars_in_pass:
         raise HTTPException(status_code=422, detail="stars_per_case cannot exceed stars_in_pass")
 
+    # Enforce max 5 AP positions
+    existing = (
+        db.query(InvestmentPosition)
+        .filter(
+            InvestmentPosition.position_type == InvestmentPositionType.armorypass,
+            InvestmentPosition.status != "sold",
+        )
+        .count()
+    )
+    if existing >= AP_MAX_POSITIONS:
+        raise HTTPException(status_code=409, detail=f"Максимум {AP_MAX_POSITIONS} AP позиций")
+
     fixation_count  = body.stars_in_pass // body.stars_per_case
     buy_price       = body.pass_cost / body.stars_in_pass * body.stars_per_case
     sale_target     = (buy_price + 5) * 1.15
@@ -426,5 +455,59 @@ def reset_position_endpoint(
     if position.position_type != InvestmentPositionType.armorypass:
         raise HTTPException(status_code=422, detail="Only armorypass positions can be reset")
     position.current_count = 0
+    db.commit()
+    return _position_to_dict(position, _latest_price(db, position.container_id))
+
+
+@router.patch("/{position_id}/assets", response_model=dict)
+def update_assets_endpoint(
+    position_id: str,
+    body:        UpdateAssetsRequest,
+    db:          Session = Depends(get_db),
+) -> dict:
+    """
+    Link Steam inventory asset_ids to an Armory Pass position.
+
+    Validates that each asset_id is not already claimed by another open position.
+    """
+    import json as _json
+
+    position = db.get(InvestmentPosition, position_id)
+    if not position:
+        raise HTTPException(status_code=404, detail="Position not found")
+
+    new_ids = set(body.asset_ids)
+
+    # Collect all asset_ids claimed by OTHER positions
+    other_positions = (
+        db.query(InvestmentPosition)
+        .filter(
+            InvestmentPosition.id != position_id,
+            InvestmentPosition.status != "sold",
+        )
+        .all()
+    )
+    claimed: set[str] = set()
+    for p in other_positions:
+        try:
+            claimed.update(_json.loads(p.linked_asset_ids or "[]"))
+        except Exception:
+            pass
+
+    conflicts = new_ids & claimed
+    if conflicts:
+        raise HTTPException(
+            status_code=409,
+            detail=f"asset_ids уже привязаны к другой позиции: {', '.join(list(conflicts)[:5])}",
+        )
+
+    if len(new_ids) > position.fixation_count:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Нельзя привязать больше {position.fixation_count} предметов (fixation_count)",
+        )
+
+    position.linked_asset_ids = _json.dumps(list(new_ids))
+    position.current_count = len(new_ids)
     db.commit()
     return _position_to_dict(position, _latest_price(db, position.container_id))

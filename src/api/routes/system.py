@@ -107,6 +107,25 @@ def task_history_endpoint() -> list:
     return get_task_history()
 
 
+@router.get("/task-history/{task_id}/summary")
+def task_summary_endpoint(task_id: int) -> dict:
+    from infra.work_queue import get_task_summary
+    data = get_task_summary(task_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="No summary for this task")
+    return {"summary": data}
+
+
+@router.delete("/task-history")
+def clear_task_history_endpoint() -> dict:
+    from src.domain.connection import SessionLocal
+    from src.domain.models import TaskHistory
+    with SessionLocal() as db:
+        deleted = db.query(TaskHistory).delete()
+        db.commit()
+    return {"ok": True, "deleted": deleted}
+
+
 @router.get("/last-ping")
 def last_ping_endpoint() -> dict:
     """Return the last ping-steam result stored in Redis."""
@@ -156,6 +175,8 @@ async def ping_steam_endpoint() -> dict:
         )
         return _save({"status": "blocked", "pinged_at": now, "blocked_until": blocked_until, "remaining_s": remaining_s})
 
+    # ── Check 1: market price overview (priceoverview endpoint) ─────────────
+    overview_status = "unknown"
     try:
         from scrapper.steam.client import SteamMarketClient
         async with SteamMarketClient() as client:
@@ -169,16 +190,72 @@ async def ping_steam_endpoint() -> dict:
                 datetime.fromtimestamp(time.time() + remaining_s, tz=UTC).strftime("%H:%M UTC")
                 if remaining_s > 0 else "неизвестно"
             )
-            return _save({"status": "blocked", "pinged_at": now, "blocked_until": blocked_until, "remaining_s": remaining_s})
-        return _save({"status": "ok", "pinged_at": now})
-
+            overview_status = "blocked"
+        else:
+            overview_status = "ok"
     except RuntimeError as exc:
         msg = str(exc)
         if "exist" in msg.lower() or "credential" in msg.lower():
             return _save({"status": "no_credentials", "pinged_at": now})
-        return _save({"status": "error", "pinged_at": now, "detail": msg[:120]})
-    except Exception as exc:
-        return _save({"status": "error", "pinged_at": now, "detail": str(exc)[:120]})
+        overview_status = "error"
+    except Exception:
+        overview_status = "error"
+
+    # ── Check 2: market transaction history (myhistory endpoint) ────────────
+    history_status = "unknown"
+    try:
+        import httpx as _httpx
+        from infra.steam_credentials import get_login_secure as _get_ls, get_session_id as _get_si
+        _cookie = _get_ls()
+        if not _cookie:
+            history_status = "no_cookie"
+        else:
+            _cookies = {"steamLoginSecure": _cookie}
+            _si = _get_si()
+            if _si:
+                _cookies["sessionid"] = _si
+            _resp = _httpx.get(
+                "https://steamcommunity.com/market/myhistory",
+                params={"norender": "1", "start": "0", "count": "1"},
+                cookies=_cookies,
+                headers={"User-Agent": "Mozilla/5.0", "Referer": "https://steamcommunity.com/market/"},
+                timeout=15,
+                follow_redirects=True,
+            )
+            if _resp.status_code == 200:
+                history_status = "ok"
+            elif _resp.status_code == 429:
+                history_status = "blocked"
+            elif _resp.status_code == 403:
+                history_status = "auth_error"
+            else:
+                history_status = f"http_{_resp.status_code}"
+    except Exception:
+        history_status = "error"
+
+    # ── Aggregate result ─────────────────────────────────────────────────────
+    all_ok = overview_status == "ok" and history_status == "ok"
+    any_blocked = overview_status == "blocked" or history_status == "blocked"
+    top_status = "ok" if all_ok else ("blocked" if any_blocked else "partial")
+
+    result: dict = {
+        "status": top_status,
+        "pinged_at": now,
+        "endpoints": {
+            "overview": overview_status,
+            "history":  history_status,
+        },
+    }
+    # Keep legacy fields for backward compat with existing UI label renderer
+    if top_status == "blocked":
+        ttl_now = redis.ttl("STEALTH_BLOCK_EXPIRES")
+        remaining_s = max(0, ttl_now) if ttl_now and ttl_now > 0 else 0
+        result["blocked_until"] = (
+            datetime.fromtimestamp(time.time() + remaining_s, tz=UTC).strftime("%H:%M UTC")
+            if remaining_s > 0 else "?"
+        )
+        result["remaining_s"] = remaining_s
+    return _save(result)
 
 
 @router.post("/update-cookie")
@@ -238,3 +315,12 @@ def update_cookie_endpoint(req: UpdateCookieRequest) -> dict:
 
     logger.info("Cookie hot-swap successful")
     return {"ok": True, "reset_tasks": 0, "workers_released": 0}
+
+
+@router.get("/cooldown")
+def get_cooldown() -> dict:
+    from infra.scrape_guard import get_active_cooldown
+    until = get_active_cooldown()
+    if until:
+        return {"active": True, "cooldown_until": until.isoformat(), "cooldown_until_fmt": until.strftime("%H:%M UTC")}
+    return {"active": False, "cooldown_until": None, "cooldown_until_fmt": None}

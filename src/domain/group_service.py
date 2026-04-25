@@ -26,6 +26,7 @@ import structlog
 from sqlalchemy.orm import Session
 
 from src.domain.models import (
+    DimContainer,
     FactTransaction,
     LinkStatus,
     PositionTransactionGroup,
@@ -110,9 +111,18 @@ def suggest_groups(db: Session) -> list[GroupSuggestion]:
 
     Only returns clusters with ≥ 2 transactions.
     """
+    # Only consider transactions for known containers (ignore skins, stickers, etc.)
+    known_names: set[str] = {
+        row.container_name
+        for row in db.query(DimContainer.container_name).all()
+    }
+
     rows: list[FactTransaction] = (
         db.query(FactTransaction)
-        .filter(FactTransaction.transaction_group_id.is_(None))
+        .filter(
+            FactTransaction.transaction_group_id.is_(None),
+            FactTransaction.item_name.in_(known_names),
+        )
         .order_by(FactTransaction.trade_date)
         .all()
     )

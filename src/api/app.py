@@ -13,7 +13,6 @@ from src.api.routes import (
     items_router,
     metrics_router,
     positions_router,
-    scrape_sessions_router,
     stats_router,
     sync_router,
     system_router,
@@ -86,7 +85,6 @@ def create_app(lifespan: Any = None) -> FastAPI:
     app.include_router(stats_router, prefix="/api/v1")
     app.include_router(sync_router, prefix="/api/v1")
     app.include_router(system_router, prefix="/api/v1")
-    app.include_router(scrape_sessions_router, prefix="/api/v1")
     app.include_router(metrics_router)  # /metrics — no prefix
 
     @app.get("/health", tags=["health"], summary="Health check")

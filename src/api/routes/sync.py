@@ -1,11 +1,15 @@
 """
 Sync endpoints — on-demand Steam data refresh.
 
-POST /sync/wallet           — fetch wallet balance from Steam, persist to cache
-POST /sync/inventory        — enqueue inventory sync job
-POST /sync/transactions     — fetch Steam Market transaction history
-POST /sync/market/catalog   — enqueue market catalog discovery job
-POST /sync/market/prices    — enqueue price poll job
+POST /sync/wallet                    — fetch wallet balance from Steam, persist to cache
+POST /sync/inventory                 — enqueue inventory sync job
+POST /sync/transactions              — fetch Steam Market transaction history
+POST /sync/market/catalog            — enqueue market catalog discovery job
+POST /sync/market/prices             — enqueue price poll job
+POST /sync/market/prices/missing-volume — price poll for containers with no volume data
+POST /sync/backfill/missing_history  — backfill for containers with < 5 rows in 90 days
+POST /sync/backfill/blacklisted      — backfill for blacklisted containers
+POST /sync/backfill/active           — backfill for containers with open positions
 """
 
 from __future__ import annotations
@@ -161,17 +165,6 @@ def sync_prices_missing_volume_endpoint() -> SyncDispatchResponse:
     return _enqueue({"type": "price_poll", "container_ids": ids}, f"price_poll/missing-volume ({len(ids)})")
 
 
-# ── Backfill price history (all containers, optional type filter) ─────────────
-
-@router.post("/backfill", response_model=SyncDispatchResponse)
-def sync_backfill_endpoint(req: TypeFilterRequest = TypeFilterRequest()) -> SyncDispatchResponse:
-    names = _names_for_type(req.container_type)
-    if names is not None and not names:
-        return SyncDispatchResponse(ok=False, already_running=False, message=f"Нет контейнеров типа «{req.container_type}».")
-    label = f"backfill_history/{req.container_type} ({len(names)})" if names else "backfill_history"
-    return _enqueue({"type": "backfill_history", "names": names}, label)
-
-
 # ── Backfill price history (blacklisted containers) ───────────────────────────
 
 @router.post("/backfill/blacklisted", response_model=SyncDispatchResponse)
@@ -190,6 +183,36 @@ def sync_backfill_blacklisted_endpoint() -> SyncDispatchResponse:
 @router.post("/market/prices/blacklisted", response_model=SyncDispatchResponse)
 def sync_prices_blacklisted_endpoint() -> SyncDispatchResponse:
     return _enqueue({"type": "price_poll", "include_blacklisted": True}, "price_poll/blacklisted")
+
+
+# ── Backfill price history (containers with insufficient 90-day history) ─────
+
+@router.post("/backfill/missing_history", response_model=SyncDispatchResponse)
+def sync_backfill_missing_history_endpoint() -> SyncDispatchResponse:
+    """Enqueue backfill_history only for containers with fewer than 5 price rows in the last 90 days."""
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import func
+
+    from src.domain.connection import SessionLocal
+    from src.domain.models import DimContainer, FactContainerPrice
+
+    cutoff_90 = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=90)
+    with SessionLocal() as db:
+        counts = dict(
+            db.query(FactContainerPrice.container_id, func.count(FactContainerPrice.id))
+            .filter(FactContainerPrice.timestamp >= cutoff_90)
+            .group_by(FactContainerPrice.container_id)
+            .all()
+        )
+        names = [
+            str(c.container_name)
+            for c in db.query(DimContainer).filter(DimContainer.is_blacklisted == 0).all()
+            if counts.get(c.container_id, 0) < 5
+        ]
+    if not names:
+        return SyncDispatchResponse(ok=True, already_running=False, message="Все контейнеры имеют достаточно истории.")
+    return _enqueue({"type": "backfill_history", "names": names}, f"backfill_history/missing ({len(names)})")
 
 
 # ── Backfill price history (containers with open positions only) ───────────────

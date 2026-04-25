@@ -28,7 +28,7 @@ from ui.helpers import (
 
 logger = logging.getLogger(__name__)
 
-_VERSION = "2.5.2"  # bump this to confirm new code is running
+_VERSION = "2.5.13"  # bump this to confirm new code is running
 
 # ─── Design token aliases (kept here for layout code) ──────────────────────────
 _BG_WARN = "#3d2b00"  # stale calendar warning background (not in theme)
@@ -212,6 +212,7 @@ def create_dash_app() -> dash.Dash:
                             ),
                             # Stores
                             dcc.Store(id="position-modal-store", data={}),
+                            dcc.Store(id="ap-inv-pos-store", data=None),
                             dcc.Store(id="armory-pass-store", data={}),
                             dcc.Store(id="selected-cid", data=default_id),
                             dcc.Store(id="invest-store", data={}),
@@ -222,6 +223,8 @@ def create_dash_app() -> dash.Dash:
                             dcc.Store(id="tx-page-store", data=1),
                             dcc.Store(id="price-count-store", data=None),
                             dcc.Store(id="task-done-ts", data=None),
+                            dcc.Store(id="wizard-suggestions-store", data=[]),
+                            dcc.Store(id="groups-refresh-store", data=0),
                             dcc.Interval(
                                 id="startup-interval",
                                 interval=1_000,
@@ -250,7 +253,6 @@ def create_dash_app() -> dash.Dash:
                         children=[
                             dcc.Tabs(
                                 id="main-tabs",
-                                value="system",  # PV-46: open on System tab for auth/health check
                                 style={"backgroundColor": _BG2},
                                 colors={
                                     "border": _BORDER,
@@ -258,6 +260,9 @@ def create_dash_app() -> dash.Dash:
                                     "background": _BG2,
                                 },
                                 children=[
+                                    dcc.Tab(
+                                        label="System", value="system", className="custom-tab"
+                                    ),
                                     dcc.Tab(label="Анализ", value="market", className="custom-tab"),
                                     dcc.Tab(
                                         label="Inventory", value="inventory", className="custom-tab"
@@ -270,9 +275,6 @@ def create_dash_app() -> dash.Dash:
                                     ),
                                     dcc.Tab(
                                         label="Analytics", value="analytics", className="custom-tab"
-                                    ),
-                                    dcc.Tab(
-                                        label="System", value="system", className="custom-tab"
                                     ),
                                 ],
                             ),
@@ -403,6 +405,23 @@ def create_dash_app() -> dash.Dash:
             dcc.Interval(id="cookie-status-interval", interval=30_000, n_intervals=0),
             # Auth-pause polling — enabled only when cs2:worker:auth_paused Redis key exists
             dcc.Interval(id="auth-check-interval", interval=3_000, n_intervals=0, disabled=True),
+            # AP Inventory Link Modal
+            dbc.Modal(
+                id="ap-inv-modal",
+                is_open=False,
+                size="lg",
+                children=[
+                    dbc.ModalHeader(dbc.ModalTitle("Привязать предметы инвентаря")),
+                    dbc.ModalBody(html.Div(id="ap-inv-modal-body")),
+                    dbc.ModalFooter([
+                        dbc.Button("Сохранить", id="ap-inv-save-btn", color="success", size="sm", n_clicks=0),
+                        dbc.Button("Закрыть", id="ap-inv-close-btn", color="secondary", size="sm", n_clicks=0,
+                                   className="ms-2"),
+                        html.Div(id="ap-inv-save-status", style={"fontSize": "12px", "marginLeft": "10px",
+                                                                   "lineHeight": "32px"}),
+                    ]),
+                ],
+            ),
             # Auth-Pause Modal — opens when worker enters PAUSED_AUTH (no credentials)
             dbc.Modal(
                 id="auth-modal",
@@ -575,6 +594,57 @@ def create_dash_app() -> dash.Dash:
                 dbc.ModalBody(html.Div(id="group-detail-body")),
                 dbc.ModalFooter(
                     dbc.Button("Закрыть", id="group-detail-close-btn", color="secondary", n_clicks=0)
+                ),
+            ],
+        ),
+        # ── Wizard modal — group suggestions ─────────────────────────────────
+        dbc.Modal(
+            id="wizard-modal",
+            is_open=False,
+            size="lg",
+            children=[
+                dbc.ModalHeader(dbc.ModalTitle([
+                    html.I(className="fa fa-magic me-2"),
+                    "Предложения по группировке",
+                ])),
+                dbc.ModalBody(
+                    dcc.Loading(
+                        html.Div(id="wizard-suggestions-body"),
+                        type="circle",
+                    )
+                ),
+                dbc.ModalFooter([
+                    dbc.Button(
+                        [html.I(className="fa fa-check me-1"), "Создать все группы"],
+                        id="btn-wizard-create-all",
+                        color="success",
+                        size="sm",
+                        n_clicks=0,
+                    ),
+                    dbc.Button(
+                        "Закрыть",
+                        id="btn-wizard-close",
+                        color="secondary",
+                        size="sm",
+                        n_clicks=0,
+                        className="ms-2",
+                    ),
+                ]),
+            ],
+        ),
+        # ── Task summary modal ────────────────────────────────────────────────
+        dbc.Modal(
+            id="task-summary-modal",
+            is_open=False,
+            size="xl",
+            scrollable=True,
+            children=[
+                dbc.ModalHeader(dbc.ModalTitle(id="task-summary-title")),
+                dbc.ModalBody(
+                    dcc.Loading(html.Div(id="task-summary-body"), type="circle")
+                ),
+                dbc.ModalFooter(
+                    dbc.Button("Закрыть", id="task-summary-close-btn", color="secondary", n_clicks=0)
                 ),
             ],
         ),

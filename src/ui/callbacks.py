@@ -106,10 +106,9 @@ def _get_system_health():
         logger.debug("health: blacklist query failed: %s", _e)
 
     cooldown_until = None
-    scrape_sessions = []
     try:
         r = _req.get(
-            f"http://{_s.api_internal_host}:{_s.api_port}/api/v1/scrape-sessions/cooldown",
+            f"http://{_s.api_internal_host}:{_s.api_port}/api/v1/system/cooldown",
             timeout=3,
         )
         if r.ok:
@@ -117,15 +116,6 @@ def _get_system_health():
             cooldown_until = cd.get("cooldown_until_fmt") if cd.get("active") else None
     except Exception as _e:
         logger.debug("health: cooldown unavailable: %s", _e)
-    try:
-        r = _req.get(
-            f"http://{_s.api_internal_host}:{_s.api_port}/api/v1/scrape-sessions/",
-            timeout=3,
-        )
-        if r.ok:
-            scrape_sessions = r.json()
-    except Exception as _e:
-        logger.debug("health: scrape-sessions unavailable: %s", _e)
 
     last_ping = None
     try:
@@ -182,7 +172,6 @@ def _get_system_health():
         worker = worker_state
 
     _Health.cooldown_until = cooldown_until
-    _Health.scrape_sessions = scrape_sessions
     _Health.last_ping = last_ping
     _Health.task_history = task_history
 
@@ -979,25 +968,47 @@ def register_callbacks(app: Any) -> None:
         Output("app-toast", "header", allow_duplicate=True),
         Output("app-toast", "is_open", allow_duplicate=True),
         Output("app-toast", "icon", allow_duplicate=True),
-        Input("btn-backfill-all", "n_clicks"),
-        State("system-type-filter", "value"),
+        Input("btn-backfill-missing", "n_clicks"),
         running=[
-            (Output("btn-backfill-all", "disabled"), True, False),
-            (Output("btn-backfill-all", "children"), [dbc.Spinner(size="sm"), " Запуск…"], "Backfill All"),
+            (Output("btn-backfill-missing", "disabled"), True, False),
+            (Output("btn-backfill-missing", "children"), [dbc.Spinner(size="sm"), " Запуск…"], "Missing History"),
         ],
         prevent_initial_call=True,
     )
-    def do_backfill_all(n: Any, type_filter: Any) -> tuple:
+    def do_backfill_missing(n: Any) -> tuple:
         if not n:
             raise dash.exceptions.PreventUpdate
         import requests as _req
         try:
-            body = {"container_type": type_filter or ""}
-            r = _req.post(f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/sync/backfill", json=body, timeout=5)
+            r = _req.post(f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/sync/backfill/missing_history", timeout=5)
             data = r.json()
             if data.get("ok"):
-                label = f"Backfill — {type_filter}" if type_filter else "Backfill All (~60–110 мин)"
-                return data.get("message", "Запущено"), label, True, "success"
+                return data.get("message", "Запущено"), "Missing History", True, "success"
+            return data.get("message", "Неизвестная ошибка"), "Ошибка", True, "warning"
+        except Exception as exc:
+            return str(exc), "Ошибка подключения", True, "danger"
+
+    @app.callback(
+        Output("app-toast", "children", allow_duplicate=True),
+        Output("app-toast", "header", allow_duplicate=True),
+        Output("app-toast", "is_open", allow_duplicate=True),
+        Output("app-toast", "icon", allow_duplicate=True),
+        Input("btn-missing-volume", "n_clicks"),
+        running=[
+            (Output("btn-missing-volume", "disabled"), True, False),
+            (Output("btn-missing-volume", "children"), [dbc.Spinner(size="sm"), " Запуск…"], "Missing Volume"),
+        ],
+        prevent_initial_call=True,
+    )
+    def do_missing_volume(n: Any) -> tuple:
+        if not n:
+            raise dash.exceptions.PreventUpdate
+        import requests as _req
+        try:
+            r = _req.post(f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/sync/market/prices/missing-volume", timeout=5)
+            data = r.json()
+            if data.get("ok"):
+                return data.get("message", "Запущено"), "Missing Volume", True, "success"
             return data.get("message", "Неизвестная ошибка"), "Ошибка", True, "warning"
         except Exception as exc:
             return str(exc), "Ошибка подключения", True, "danger"
@@ -1009,6 +1020,8 @@ def register_callbacks(app: Any) -> None:
         prevent_initial_call=True,
     )
     def do_clear_queue(n: Any) -> str:
+        if not n:
+            raise dash.exceptions.PreventUpdate
         import requests as _req
         try:
             r = _req.post(
@@ -1054,10 +1067,22 @@ def register_callbacks(app: Any) -> None:
 
         status = data.get("status")
         label = _ping_label(data)
+        endpoints = data.get("endpoints", {})
+
+        def _ep_icon(s: str) -> str:
+            if s == "ok":        return "✓"
+            if s == "blocked":   return "✗ 429"
+            if s == "auth_error": return "✗ 403"
+            if s == "no_cookie": return "✗ нет cookie"
+            return "✗"
+
+        ov  = _ep_icon(endpoints.get("overview", "unknown"))
+        his = _ep_icon(endpoints.get("history",  "unknown"))
+        ep_line = f"Обзор цен: {ov}  ·  История: {his}"
+
         if status == "ok":
-            return label, "Steam доступен ✓", "Ping Steam", True, "success"
+            return label, ep_line, "Steam ✓", True, "success"
         if status == "blocked":
-            blocked_until = data.get("blocked_until", "?")
             remaining_s = data.get("remaining_s", 0)
             if remaining_s >= 3600:
                 r_str = f"{remaining_s // 3600}ч {(remaining_s % 3600) // 60}м"
@@ -1065,10 +1090,13 @@ def register_callbacks(app: Any) -> None:
                 r_str = f"{remaining_s // 60} мин"
             else:
                 r_str = f"{remaining_s} сек"
-            return label, f"Blocked до {blocked_until} ({r_str})", "Steam заблокирован", True, "warning"
+            msg = f"{ep_line}\nРазблокировка через {r_str}" if remaining_s else ep_line
+            return label, msg, "Steam заблокирован", True, "warning"
+        if status == "partial":
+            return label, ep_line, "Steam — частично", True, "warning"
         if status == "no_credentials":
-            return label, "Токен не настроен", "Ping Steam", True, "danger"
-        return label, data.get("detail", "Ошибка запроса"), "Ping Steam", True, "danger"
+            return label, "Cookie не настроен", "Ping Steam", True, "danger"
+        return label, data.get("detail", ep_line), "Ping Steam", True, "danger"
 
     @app.callback(
         Output("steam-history-status", "children"),
@@ -1082,6 +1110,9 @@ def register_callbacks(app: Any) -> None:
         prevent_initial_call=True,
     )
     def load_steam_history(n_clicks: Any, refresh_counter: Any) -> Any:
+        if not n_clicks:
+            raise dash.exceptions.PreventUpdate
+
         import uuid as _uuid
 
         from scrapper.steam_transactions import compute_annual_pnl, fetch_market_history
@@ -1681,45 +1712,6 @@ def register_callbacks(app: Any) -> None:
         from ui.renderers.system_status import render_system_status
         return render_system_status(health=_get_system_health())
 
-    # ── Scrape sessions: resume / delete ─────────────────────────────────────────
-    @app.callback(
-        Output("tab-content", "children", allow_duplicate=True),
-        Output("session-action-msg", "children"),
-        Input({"type": "btn-session-resume", "index": ALL}, "n_clicks"),
-        Input({"type": "btn-session-delete", "index": ALL}, "n_clicks"),
-        prevent_initial_call=True,
-    )
-    def do_session_action(resume_clicks: Any, delete_clicks: Any) -> Any:
-        ctx = callback_context
-        triggered = [t for t in ctx.triggered if t.get("value") and t["value"] > 0]
-        if not triggered:
-            raise dash.exceptions.PreventUpdate
-        prop_id = triggered[0]["prop_id"]
-        import json as _json2
-        try:
-            info = _json2.loads(prop_id.rsplit(".", 1)[0])
-            session_id = info["index"]
-            btn_type = info["type"]
-        except Exception:
-            raise dash.exceptions.PreventUpdate
-
-        import requests as _req
-
-        from config import settings as _s
-        base = f"http://{_s.api_internal_host}:{_s.api_port}/api/v1/scrape-sessions"
-        try:
-            if btn_type == "btn-session-resume":
-                r = _req.post(f"{base}/{session_id}/resume", timeout=5)
-                msg = r.json().get("message", "OK")
-            else:
-                r = _req.delete(f"{base}/{session_id}", timeout=5)
-                msg = "Сессия удалена."
-        except Exception as exc:
-            msg = str(exc)
-
-        from ui.renderers.system_status import render_system_status
-        return render_system_status(health=_get_system_health()), msg
-
     # ── Per-container: toggle blacklist ──────────────────────────────────────────
     @app.callback(
         Output("invest-store", "data", allow_duplicate=True),
@@ -2175,12 +2167,22 @@ def _register_cookie_callbacks(app: dash.Dash) -> None:
             raise dash.exceptions.PreventUpdate
         return _run_control_check(selected_cid, invest_store)
 
+    # ── Groups section: targeted refresh (no full balance tab reload) ──────────
+    @app.callback(
+        Output("balance-groups-content", "children"),
+        Input("groups-refresh-store", "data"),
+        prevent_initial_call=True,
+    )
+    def refresh_groups_section(_: Any) -> Any:
+        from ui.balance import render_groups_section
+        return render_groups_section()
+
     # ── Skip group ────────────────────────────────────────────────────────────
 
     @app.callback(
-        Output("balance-refresh-store", "data", allow_duplicate=True),
+        Output("groups-refresh-store", "data", allow_duplicate=True),
         Input({"type": "btn-grp-skip", "group_id": ALL}, "n_clicks"),
-        State("balance-refresh-store", "data"),
+        State("groups-refresh-store", "data"),
         prevent_initial_call=True,
     )
     def skip_group_btn(n_clicks_list, refresh_count):
@@ -2309,15 +2311,62 @@ def _register_cookie_callbacks(app: dash.Dash) -> None:
                 results[i] = html.Span(f"Ошибка: {exc}", style={"color": _RED})
         return results
 
+    # ── Position: delete (all types) ─────────────────────────────────────────
+    @app.callback(
+        Output("balance-refresh-store", "data", allow_duplicate=True),
+        Output("app-toast", "children", allow_duplicate=True),
+        Output("app-toast", "header", allow_duplicate=True),
+        Output("app-toast", "is_open", allow_duplicate=True),
+        Output("app-toast", "icon", allow_duplicate=True),
+        Input({"type": "btn-pos-delete", "pos_id": ALL}, "n_clicks"),
+        State({"type": "btn-pos-delete", "pos_id": ALL}, "id"),
+        State("balance-refresh-store", "data"),
+        prevent_initial_call=True,
+    )
+    def delete_position(n_clicks_list: Any, ids: Any, refresh_val: Any) -> tuple:
+        ctx = callback_context
+        if not ctx.triggered or not any(n for n in (n_clicks_list or [])):
+            raise dash.exceptions.PreventUpdate
+        tid_raw = ctx.triggered[0]["prop_id"].rsplit(".", 1)[0]
+        try:
+            triggered_id = _json.loads(tid_raw)
+        except Exception:
+            raise dash.exceptions.PreventUpdate
+
+        pos_id = triggered_id.get("pos_id")
+        if not pos_id:
+            raise dash.exceptions.PreventUpdate
+
+        try:
+            import requests as _req
+            resp = _req.delete(
+                f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/positions/{pos_id}",
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                return (
+                    (refresh_val or 0) + 1,
+                    "Позиция удалена. Связанные группы возвращены в очередь.",
+                    "Позиция удалена",
+                    True,
+                    "success",
+                )
+            detail = resp.json().get("detail", resp.text[:120]) if "application/json" in resp.headers.get("content-type", "") else resp.text[:120]
+            return no_update, f"Ошибка {resp.status_code}: {detail}", "Ошибка удаления", True, "danger"
+        except Exception as exc:
+            logger.warning("delete_position: %s", exc)
+            return no_update, str(exc), "Ошибка удаления", True, "danger"
+
     # ── Armory Pass position: create ──────────────────────────────────────────
     @app.callback(
         Output("ap-pos-create-status", "children"),
+        Output("balance-refresh-store", "data", allow_duplicate=True),
         Input("btn-create-ap-position", "n_clicks"),
         State("armory-pass-store", "data"),
-        State("selected-cid", "data"),
+        State("balance-refresh-store", "data"),
         prevent_initial_call=True,
     )
-    def create_ap_position(n: Any, ap_store: Any, selected_cid: Any) -> Any:
+    def create_ap_position(n: Any, ap_store: Any, refresh_val: Any) -> Any:
         if not n:
             raise dash.exceptions.PreventUpdate
         _ap = ap_store or {}
@@ -2327,15 +2376,14 @@ def _register_cookie_callbacks(app: dash.Dash) -> None:
         container      = _ap.get("container")
 
         if not pass_cost or not container:
-            return html.Span("Сначала заполни калькулятор выше", style={"color": _ORANGE})
+            return html.Span("Сначала заполни калькулятор выше", style={"color": _ORANGE}), no_update
 
-        # Resolve container_id: prefer selected_cid if container names match
         from src.domain.connection import SessionLocal as _SL
         from src.domain.models import DimContainer as _DC
         with _SL() as _db:
             c = _db.query(_DC).filter(_DC.container_name == container).first()
             if not c:
-                return html.Span(f"Контейнер «{container}» не найден в БД", style={"color": _RED})
+                return html.Span(f"Контейнер «{container}» не найден в БД", style={"color": _RED}), no_update
             cid = str(c.container_id)
 
         try:
@@ -2352,28 +2400,318 @@ def _register_cookie_callbacks(app: dash.Dash) -> None:
             )
             if resp.status_code == 200:
                 d = resp.json()
-                return html.Span(
+                msg = html.Span(
                     f"✓ Создана: «{d['name']}» · {d['fixation_count']} кейсов",
                     style={"color": _GREEN},
                 )
-            return html.Span(f"Ошибка {resp.status_code}: {resp.text[:80]}", style={"color": _RED})
+                return msg, (refresh_val or 0) + 1
+            detail = resp.json().get("detail", resp.text[:80]) if resp.headers.get("content-type", "").startswith("application/json") else resp.text[:80]
+            return html.Span(f"Ошибка {resp.status_code}: {detail}", style={"color": _RED}), no_update
         except Exception as exc:
-            return html.Span(f"Ошибка: {exc}", style={"color": _RED})
+            return html.Span(f"Ошибка: {exc}", style={"color": _RED}), no_update
 
-    # ── Wizard — open in new browser tab ─────────────────────────────────────
-    app.clientside_callback(
-        """
-        function(n_clicks) {
-            if (n_clicks && n_clicks > 0) {
-                window.open('/wizard', '_blank', 'noopener,noreferrer');
-            }
-            return window.dash_clientside.no_update;
+    # ── Armory Pass: open inventory link modal ────────────────────────────────
+    @app.callback(
+        Output("ap-inv-modal", "is_open"),
+        Output("ap-inv-modal-body", "children"),
+        Output("ap-inv-pos-store", "data"),
+        Input({"type": "ap-pos-link-inv", "pos_id": ALL}, "n_clicks"),
+        Input("ap-inv-close-btn", "n_clicks"),
+        State("inventory-store", "data"),
+        prevent_initial_call=True,
+    )
+    def open_ap_inv_modal(link_clicks: Any, close_n: Any, inventory_data: Any) -> Any:
+        ctx = callback_context
+        tid_raw = ctx.triggered[0]["prop_id"].rsplit(".", 1)[0]
+        if tid_raw == "ap-inv-close-btn":
+            return False, no_update, no_update
+        if not any(n for n in (link_clicks or [])):
+            raise dash.exceptions.PreventUpdate
+        try:
+            triggered_id = _json.loads(tid_raw)
+        except Exception:
+            raise dash.exceptions.PreventUpdate
+        pos_id = triggered_id.get("pos_id")
+
+        # Load position from API
+        import requests as _req
+        try:
+            resp = _req.get(
+                f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/positions",
+                timeout=5,
+            )
+            positions = resp.json() if resp.status_code == 200 else []
+        except Exception:
+            positions = []
+        pos = next((p for p in positions if p["id"] == pos_id), None)
+        if not pos:
+            return False, no_update, no_update
+
+        container_id = pos["container_id"]
+        fixation_count = pos["fixation_count"]
+        linked = set(pos.get("linked_asset_ids") or [])
+
+        # Collect all asset_ids claimed by OTHER positions
+        claimed_by_others: set[str] = set()
+        for p in positions:
+            if p["id"] != pos_id:
+                claimed_by_others.update(p.get("linked_asset_ids") or [])
+
+        # Find inventory items for this container
+        inv = inventory_data or []
+        from src.domain.connection import SessionLocal as _SL
+        from src.domain.models import DimContainer as _DC
+        with _SL() as _db:
+            c = _db.get(_DC, container_id)
+            container_name = str(c.container_name) if c else ""
+
+        matching = [i for i in inv if i.get("market_hash_name") == container_name]
+        all_asset_ids = []
+        for item in matching:
+            all_asset_ids.extend(item.get("asset_ids") or [])
+
+        if not all_asset_ids:
+            body = html.Div(
+                f"Предметы «{container_name}» не найдены в инвентаре. "
+                "Загрузи инвентарь на вкладке Inventory.",
+                style={"color": _MUTED, "fontSize": "12px"},
+            )
+            return True, body, pos_id
+
+        # Split asset_ids into: linked to this pos / claimed by others / free
+        free_ids = [a for a in all_asset_ids if a not in claimed_by_others]
+        already_linked_count = len(linked)       # linked to THIS position
+        claimed_by_others_count = len([a for a in all_asset_ids if a in claimed_by_others])
+        free_count = len(free_ids)               # available (free + already linked to this pos)
+        max_can_link = min(fixation_count, free_count)
+
+        # Store available pool + pos metadata for the save callback
+        store_data = {
+            "pos_id": pos_id,
+            "free_ids": free_ids,          # asset IDs available to assign (not claimed by others)
+            "fixation_count": fixation_count,
         }
-        """,
-        Output("btn-open-wizard", "data-wizard-opened"),
+
+        body = html.Div([
+            html.Div(
+                f"{container_name}  ·  Позиция: {pos.get('name', pos_id)}",
+                style={"color": _GOLD, "fontWeight": "bold", "fontSize": "13px", "marginBottom": "12px"},
+            ),
+            dbc.Row([
+                dbc.Col([
+                    html.Div("В инвентаре", style={"color": _MUTED, "fontSize": "10px", "letterSpacing": "1px"}),
+                    html.Div(f"{len(all_asset_ids)} шт.", style={"color": _TEXT, "fontWeight": "bold", "fontSize": "18px"}),
+                ], width=3),
+                dbc.Col([
+                    html.Div("Занято др. позициями", style={"color": _MUTED, "fontSize": "10px", "letterSpacing": "1px"}),
+                    html.Div(f"{claimed_by_others_count} шт.", style={"color": _RED if claimed_by_others_count else _MUTED, "fontWeight": "bold", "fontSize": "18px"}),
+                ], width=3),
+                dbc.Col([
+                    html.Div("Доступно", style={"color": _MUTED, "fontSize": "10px", "letterSpacing": "1px"}),
+                    html.Div(f"{free_count} шт.", style={"color": _GREEN, "fontWeight": "bold", "fontSize": "18px"}),
+                ], width=3),
+                dbc.Col([
+                    html.Div("Лимит позиции", style={"color": _MUTED, "fontSize": "10px", "letterSpacing": "1px"}),
+                    html.Div(f"{fixation_count} шт.", style={"color": _BLUE, "fontWeight": "bold", "fontSize": "18px"}),
+                ], width=3),
+            ], className="mb-4"),
+            html.Hr(style={"borderColor": _BORDER}),
+            dbc.Row([
+                dbc.Col([
+                    dbc.Label("Привязать к этой позиции", style={"color": _TEXT, "fontSize": "12px"}),
+                    dbc.Input(
+                        id="ap-inv-count-input",
+                        type="number",
+                        min=0,
+                        max=max_can_link,
+                        step=1,
+                        value=already_linked_count,
+                        style={"width": "120px", "fontSize": "18px", "fontWeight": "bold", "textAlign": "center"},
+                    ),
+                    html.Div(
+                        f"максимум {max_can_link} шт.",
+                        style={"color": _MUTED, "fontSize": "10px", "marginTop": "4px"},
+                    ),
+                ], width="auto"),
+            ], align="center"),
+            html.Div(
+                "Asset IDs назначаются автоматически — вручную ничего выбирать не нужно.",
+                style={"color": _MUTED, "fontSize": "10px", "fontStyle": "italic", "marginTop": "16px"},
+            ),
+        ])
+        return True, body, store_data
+
+    # ── Armory Pass: save inventory link ──────────────────────────────────────
+    @app.callback(
+        Output("ap-inv-save-status", "children"),
+        Output("ap-inv-modal", "is_open", allow_duplicate=True),
+        Output("balance-refresh-store", "data", allow_duplicate=True),
+        Input("ap-inv-save-btn", "n_clicks"),
+        State("ap-inv-pos-store", "data"),
+        State("ap-inv-count-input", "value"),
+        State("balance-refresh-store", "data"),
+        prevent_initial_call=True,
+    )
+    def save_ap_inv_assets(n: Any, store: Any, count_val: Any, refresh_val: Any) -> Any:
+        if not n or not store:
+            raise dash.exceptions.PreventUpdate
+        pos_id = store.get("pos_id")
+        free_ids: list[str] = store.get("free_ids", [])
+        fixation_count: int = store.get("fixation_count", 0)
+        if not pos_id:
+            raise dash.exceptions.PreventUpdate
+
+        count = int(count_val or 0)
+        count = max(0, min(count, fixation_count, len(free_ids)))
+        selected = free_ids[:count]
+
+        try:
+            import requests as _req
+            resp = _req.patch(
+                f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/positions/{pos_id}/assets",
+                json={"asset_ids": selected},
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                d = resp.json()
+                return (
+                    html.Span(f"✓ Привязано {len(d.get('linked_asset_ids', []))} предм.", style={"color": _GREEN}),
+                    False,
+                    (refresh_val or 0) + 1,
+                )
+            detail = resp.json().get("detail", resp.text[:80])
+            return html.Span(f"Ошибка: {detail}", style={"color": _RED}), no_update, no_update
+        except Exception as exc:
+            return html.Span(f"Ошибка: {exc}", style={"color": _RED}), no_update, no_update
+
+    # ── Wizard — open modal and load suggestions ─────────────────────────────
+    @app.callback(
+        Output("wizard-modal", "is_open"),
+        Output("wizard-suggestions-store", "data"),
+        Output("wizard-suggestions-body", "children"),
         Input("btn-open-wizard", "n_clicks"),
         prevent_initial_call=True,
     )
+    def open_wizard_modal(n_clicks: Any) -> tuple:
+        if not n_clicks:
+            raise dash.exceptions.PreventUpdate
+        import requests as _req
+        from config import settings as _s
+        suggestions: list = []
+        try:
+            r = _req.get(
+                f"http://{_s.api_internal_host}:{_s.api_port}/api/v1/positions/groups/suggestions",
+                timeout=10,
+            )
+            if r.status_code == 200:
+                suggestions = r.json()
+        except Exception as exc:
+            logger.warning("wizard: failed to fetch suggestions: %s", exc)
+
+        if not suggestions:
+            body = html.Div(
+                "Нет новых предложений — все транзакции уже сгруппированы.",
+                style={"color": _MUTED, "fontSize": "13px", "padding": "12px"},
+            )
+            return True, [], body
+
+        rows = []
+        for s in suggestions:
+            direction = s.get("direction", "?")
+            dir_color = _GREEN if direction == "BUY" else _RED
+            date_from = (s.get("date_from") or "")[:10]
+            date_to   = (s.get("date_to")   or "")[:10]
+            date_range = date_from if date_from == date_to else f"{date_from} – {date_to}"
+            conf_pct = round((s.get("confidence") or 0) * 100)
+            rows.append(
+                dbc.Row([
+                    dbc.Col(
+                        dbc.Badge(direction, color="success" if direction == "BUY" else "danger",
+                                  style={"fontSize": "11px", "width": "42px"}),
+                        width="auto", className="pe-1",
+                    ),
+                    dbc.Col(
+                        html.Span(s.get("item_name", "—"),
+                                  style={"color": _TEXT, "fontSize": "13px", "fontWeight": "bold"}),
+                        width=True,
+                    ),
+                    dbc.Col(
+                        html.Span(f"{s.get('count', 0)} шт. × {int(s.get('avg_price', 0)):,} ₸",
+                                  style={"color": _MUTED, "fontSize": "12px", "fontFamily": "monospace"}),
+                        width="auto",
+                    ),
+                    dbc.Col(
+                        html.Span(date_range,
+                                  style={"color": _MUTED, "fontSize": "11px", "fontFamily": "monospace"}),
+                        width="auto",
+                    ),
+                    dbc.Col(
+                        dbc.Badge(f"{conf_pct}%",
+                                  color="success" if conf_pct >= 80 else "warning",
+                                  style={"fontSize": "10px"}),
+                        width="auto",
+                    ),
+                ], className="align-items-center py-1",
+                   style={"borderBottom": f"1px solid {_BG}", "marginLeft": "0", "marginRight": "0"})
+            )
+
+        body = html.Div([
+            html.Div(
+                f"Найдено {len(suggestions)} кластер(ов). Нажми «Создать все группы» для авто-группировки.",
+                style={"color": _MUTED, "fontSize": "12px", "marginBottom": "12px"},
+            ),
+            html.Div(rows),
+        ])
+        return True, suggestions, body
+
+    # ── Wizard — bulk-create all suggested groups ─────────────────────────────
+    @app.callback(
+        Output("wizard-modal", "is_open", allow_duplicate=True),
+        Output("groups-refresh-store", "data", allow_duplicate=True),
+        Input("btn-wizard-create-all", "n_clicks"),
+        State("wizard-suggestions-store", "data"),
+        State("groups-refresh-store", "data"),
+        prevent_initial_call=True,
+    )
+    def wizard_create_all(n_clicks: Any, suggestions: Any, grp_refresh: Any) -> tuple:
+        if not n_clicks or not suggestions:
+            raise dash.exceptions.PreventUpdate
+        import requests as _req
+        from config import settings as _s
+        created = 0
+        for s in suggestions:
+            try:
+                resp = _req.post(
+                    f"http://{_s.api_internal_host}:{_s.api_port}/api/v1/positions/groups",
+                    json={
+                        "tx_ids":     s.get("tx_ids", []),
+                        "direction":  s.get("direction", "SELL"),
+                        "item_name":  s.get("item_name", ""),
+                        "container_id": None,
+                    },
+                    timeout=10,
+                )
+                if resp.status_code in (200, 201):
+                    created += 1
+                else:
+                    logger.warning("wizard_create_all: POST /groups returned %s — %s",
+                                   resp.status_code, resp.text[:200])
+            except Exception as exc:
+                logger.warning("wizard_create_all: error creating group for %r: %s",
+                               s.get("item_name"), exc)
+        logger.info("wizard_create_all: created %d / %d groups", created, len(suggestions))
+        return False, (grp_refresh or 0) + 1
+
+    # ── Wizard — close button ─────────────────────────────────────────────────
+    @app.callback(
+        Output("wizard-modal", "is_open", allow_duplicate=True),
+        Input("btn-wizard-close", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def close_wizard_modal(n_clicks: Any) -> bool:
+        if not n_clicks:
+            raise dash.exceptions.PreventUpdate
+        return False
 
 
 def _run_control_check(container_id: str | None, invest_store: dict | None) -> html.Div:
