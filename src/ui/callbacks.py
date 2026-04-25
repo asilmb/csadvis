@@ -648,6 +648,10 @@ def register_callbacks(app: Any) -> None:
 
         is_btn = callback_context.triggered_id == "inventory-load-btn"
         steam_id = _settings.steam_id.strip()
+        logger.info(
+            "[INV-LOAD] fired triggered_id=%r n_intervals=%r n_clicks=%r settings_steam_id=%r",
+            callback_context.triggered_id, n_intervals, n_clicks, steam_id,
+        )
         if not steam_id:
             try:
                 from infra.redis_client import get_redis as _get_redis
@@ -675,6 +679,7 @@ def register_callbacks(app: Any) -> None:
             )
 
         count = len(items) if items else 0
+        logger.info("[INV-LOAD] returning to store: count=%d steam_id=%r", count, steam_id)
         status = html.Span(
             f"Загружено {count} предм." if count else "Инвентарь пуст",
             style={"color": _GREEN if count else _MUTED, "fontSize": "12px"},
@@ -772,6 +777,12 @@ def register_callbacks(app: Any) -> None:
         if tab == "market":
             return _wrap(_safe(_render_market, container_id, invest, raw_items, inventory_data))
         if tab == "inventory":
+            logger.info(
+                "[INV-RENDER] tab=inventory inventory_data type=%s len=%s show_all=%s",
+                type(inventory_data).__name__,
+                len(inventory_data) if inventory_data else 0,
+                bool(show_all_inventory),
+            )
             return _wrap(_safe(_render_inventory, inventory_data, invest, show_all=bool(show_all_inventory)))
         if tab == "portfolio":
             return _wrap(_safe(_render_portfolio, portfolio_balance, inventory_data, invest, armory_store or {}))

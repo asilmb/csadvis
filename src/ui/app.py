@@ -531,6 +531,16 @@ def create_dash_app() -> dash.Dash:
                     ]),
                 ],
             ),
+        # ── Hidden stubs for conditionally-rendered callback inputs ────────────
+        html.Div(
+            [
+                dbc.Button("", id="btn-create-flip-position", n_clicks=0,
+                           style={"display": "none"}),
+                dbc.Button("", id="btn-create-invest-position", n_clicks=0,
+                           style={"display": "none"}),
+            ],
+            style={"display": "none"},
+        ),
         # ── Position create modal ─────────────────────────────────────────────
         dbc.Modal(
             id="position-create-modal",
