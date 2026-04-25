@@ -217,8 +217,12 @@ class TestAllocatePortfolio:
 
     def test_flip_candidate_selected_on_score(self) -> None:
         """Container passes all flip filters → becomes best_flip."""
+        import math as _math
+
         c = _mock_container("c1", "FlipCase")
-        # Profitable: net(sell) - buy > 0 : 960/1.15 - 5 - 240 ≈ 590₸
+        # Profitable after 15 % Steam fee:
+        #   net(960) = 960 / 1.15 − 5 ≈ 829.8₸
+        #   net_unit = 829.8 − effective_buy(700) ≈ 129.8₸  → flip viable
         trade_advice = {
             "c1": {
                 "buy_target": 240,
@@ -226,22 +230,27 @@ class TestAllocatePortfolio:
                 "net_margin_pct": 50,
             }
         }
-        # quantity=14000 → avg_daily_vol=2000 >= 1000 liquidity floor;
-        # FLIP-R3: avg_daily_vol*7=14000 >= planned_qty*2=2000 ✓
+        # quantity=14000 → avg_daily_vol=2000 ≥ 1000 liquidity floor;
+        # FLIP-R3: avg_daily_vol*7=14000 ≥ planned_qty*2=2000 ✓
+        # current_price (700) < sell_target (960) so net_unit > 0 after fee.
         price_data = {
             "FlipCase": {
                 "quantity": 14000,
-                "current_price": 960.0,
-                "lowest_price": 912.0,
+                "current_price": 700.0,
+                "lowest_price": 670.0,
             }
         }
-        # Old anchor (200 days ago) → ACTIVE lifecycle stage (age > 180 days).
-        old_anchor = [{"timestamp": _ts(200), "price": 960.0}]
-        # Recent prices with ~6% volatility (alternating 900/1020): passes 5%-30% filter.
-        # Most-recent entry (_ts(0)) = 1020, not near ATL=900 → not DEAD.
-        recent = [
-            {"timestamp": _ts(29 - i), "price": 900.0 if i % 2 == 0 else 1020.0}
-            for i in range(30)
+        # 200 days of low-σ cosine oscillation around 700 (amplitude 60, period 10):
+        #   • stdev/mean (used by _volatility) ≈ 6 % → passes [5 %, 30 %] flip range
+        #   • σ on log returns (used by LC-1) ≈ 4 % → STABLE_LIQUIDITY (only flip-eligible phase)
+        #   • steady volume → vol_ratio ≈ 1.0
+        history = [
+            {
+                "timestamp": _ts(199 - i),
+                "price": 700.0 + 60.0 * _math.cos(i * _math.pi / 5),
+                "volume_7d": 14000,
+            }
+            for i in range(200)
         ]
         result = allocate_portfolio(
             240000.0,  # 240000₸ balance
@@ -249,7 +258,7 @@ class TestAllocatePortfolio:
             [c],
             price_data,
             trade_advice,
-            {"c1": old_anchor + recent},
+            {"c1": history},
             {},
         )
         assert result["flip"] is not None
