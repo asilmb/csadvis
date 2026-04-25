@@ -938,6 +938,69 @@ def register_callbacks(app: Any) -> None:
         except Exception as exc:
             return str(exc), "Ошибка подключения", True, "danger"
 
+    # ── Analyze Lifecycle (LC-1, work_queue dispatch) ────────────────────────
+    @app.callback(
+        Output("app-toast", "children", allow_duplicate=True),
+        Output("app-toast", "header", allow_duplicate=True),
+        Output("app-toast", "is_open", allow_duplicate=True),
+        Output("app-toast", "icon", allow_duplicate=True),
+        Input("btn-analyze-lifecycle", "n_clicks"),
+        running=[
+            (Output("btn-analyze-lifecycle", "disabled"), True, False),
+            (Output("btn-analyze-lifecycle", "children"), [dbc.Spinner(size="sm"), " Запуск…"], "Analyze containers"),
+        ],
+        prevent_initial_call=True,
+    )
+    def do_analyze_lifecycle(n: Any) -> tuple:
+        if not n:
+            raise dash.exceptions.PreventUpdate
+        import requests as _req
+        try:
+            r = _req.post(
+                f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/sync/lifecycle/analyze",
+                json={"apply_prune": False},
+                timeout=5,
+            )
+            data = r.json()
+            if data.get("already_running"):
+                return "Уже выполняется — дождись завершения.", "Lifecycle", True, "warning"
+            if data.get("ok"):
+                return "Задача запущена. Следи за прогрессом в Task History.", "Analyze Lifecycle", True, "success"
+            return data.get("message", "Неизвестная ошибка"), "Ошибка lifecycle", True, "danger"
+        except Exception as exc:
+            return str(exc), "Ошибка подключения", True, "danger"
+
+    @app.callback(
+        Output("app-toast", "children", allow_duplicate=True),
+        Output("app-toast", "header", allow_duplicate=True),
+        Output("app-toast", "is_open", allow_duplicate=True),
+        Output("app-toast", "icon", allow_duplicate=True),
+        Input("btn-analyze-lifecycle-prune", "n_clicks"),
+        running=[
+            (Output("btn-analyze-lifecycle-prune", "disabled"), True, False),
+            (Output("btn-analyze-lifecycle-prune", "children"), [dbc.Spinner(size="sm"), " Запуск…"], "Analyze + Prune"),
+        ],
+        prevent_initial_call=True,
+    )
+    def do_analyze_lifecycle_with_prune(n: Any) -> tuple:
+        if not n:
+            raise dash.exceptions.PreventUpdate
+        import requests as _req
+        try:
+            r = _req.post(
+                f"http://{_settings.api_internal_host}:{_settings.api_port}/api/v1/sync/lifecycle/analyze",
+                json={"apply_prune": True},
+                timeout=5,
+            )
+            data = r.json()
+            if data.get("already_running"):
+                return "Уже выполняется — дождись завершения.", "Lifecycle", True, "warning"
+            if data.get("ok"):
+                return "Задача запущена. Следи за прогрессом в Task History.", "Analyze + Prune", True, "success"
+            return data.get("message", "Неизвестная ошибка"), "Ошибка lifecycle", True, "danger"
+        except Exception as exc:
+            return str(exc), "Ошибка подключения", True, "danger"
+
     @app.callback(
         Output("app-toast", "children", allow_duplicate=True),
         Output("app-toast", "header", allow_duplicate=True),

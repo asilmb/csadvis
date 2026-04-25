@@ -13,6 +13,7 @@ Job dict shape
 {"type": "price_poll"}
 {"type": "sync_inventory", "steam_id": "..."}
 {"type": "backfill_history", "names": [...] | None}
+{"type": "analyze_lifecycle", "container_ids": [...] | None, "apply_prune": bool}
 
 Silent-failure guard
 --------------------
@@ -415,6 +416,8 @@ async def _handle_price_poll(job: dict) -> None:
                             await _asyncio.wait_for(_asyncio.to_thread(svc.process_new_price, cid, price, volume), timeout=30)
                         finally:
                             svc.close()
+                        # LC-1: refresh behavioral phase + forecasts now that a new price row landed.
+                        await _asyncio.to_thread(_analyze_lifecycle_safely, cid)
                     _state.last_item_name = name
                     _state.last_item_price = price
                     _state.last_item_volume = volume
@@ -528,17 +531,127 @@ async def _handle_backfill_history(job: dict) -> None:
         _state.progress_current = 0
         _state.progress_total = 0
         _state.progress_started_at = None
+    # LC-1: refresh behavioral phase + forecasts for backfilled containers.
+    backfill_names = job.get("names") or []
+    if backfill_names:
+        await asyncio.to_thread(_analyze_lifecycle_for_names, backfill_names)
     try:
         await asyncio.wait_for(asyncio.to_thread(_run_cache_refresh, "backfill_history"), timeout=300)
     except (TimeoutError, asyncio.TimeoutError):
         logger.warning("backfill_history: cache refresh timed out (>300s) — skipping, will refresh on next poll")
 
 
+# ─── LC-1: behavioral lifecycle helpers ──────────────────────────────────────
+
+
+def _analyze_lifecycle_safely(container_id: str, *, apply_prune: bool = False) -> None:
+    """Run analyze_container for one container; swallow + log any exception so a
+    classifier failure can never break the calling scrape handler."""
+    from src.domain.lifecycle_service import analyze_container
+
+    try:
+        with SessionLocal() as db:
+            result = analyze_container(container_id, db, apply_prune=apply_prune)
+            db.commit()
+            if result.phase is not None:
+                logger.debug(
+                    "analyze_lifecycle: %s → %s (prior=%s)",
+                    result.container_name,
+                    result.phase.value,
+                    result.prior_phase.value if result.prior_phase else "—",
+                )
+    except Exception as exc:
+        logger.warning("analyze_lifecycle: failed for %s — %s", container_id, exc)
+
+
+def _analyze_lifecycle_for_names(names: list[str], *, apply_prune: bool = False) -> None:
+    """Resolve container names → IDs and run analyze for each."""
+    from src.domain.models import DimContainer
+
+    with SessionLocal() as db:
+        rows = db.query(DimContainer.container_id).filter(
+            DimContainer.container_name.in_(names)
+        ).all()
+        ids = [str(r.container_id) for r in rows]
+    for cid in ids:
+        _analyze_lifecycle_safely(cid, apply_prune=apply_prune)
+
+
+async def _handle_analyze_lifecycle(job: dict) -> None:
+    """Batch behavioral classification + forecasts for many containers.
+
+    Job params:
+        container_ids: list of UUIDs to analyse (default = all non-blacklisted)
+        apply_prune:   when True, also flips is_blacklisted=1 for breached floors
+    """
+    from src.domain.models import DimContainer
+
+    apply_prune = bool(job.get("apply_prune", False))
+    container_ids: list[str] | None = job.get("container_ids")
+
+    with SessionLocal() as db:
+        q = db.query(DimContainer.container_id, DimContainer.container_name).filter(
+            DimContainer.is_blacklisted == 0
+        )
+        if container_ids:
+            q = q.filter(DimContainer.container_id.in_(container_ids))
+        rows = [(str(r.container_id), str(r.container_name)) for r in q.all()]
+
+    if not rows:
+        logger.info("analyze_lifecycle: no containers to process")
+        _state.last_job_detail = "no_containers"
+        return
+
+    logger.info("analyze_lifecycle: processing %d containers (apply_prune=%s)", len(rows), apply_prune)
+    _state.progress_current = 0
+    _state.progress_total = len(rows)
+    _state.progress_started_at = datetime.now(UTC).replace(tzinfo=None)
+    _state._current_summary = []
+
+    classified = 0
+    pruned = 0
+    skipped = 0
+    try:
+        for cid, name in rows:
+            if _state.cancel_requested:
+                logger.info("analyze_lifecycle: cancelled by request")
+                break
+            _state.last_item_name = name
+            try:
+                from src.domain.lifecycle_service import analyze_container
+                with SessionLocal() as db:
+                    result = analyze_container(cid, db, apply_prune=apply_prune)
+                    db.commit()
+                if result.phase is None:
+                    skipped += 1
+                else:
+                    classified += 1
+                    if result.pruned:
+                        pruned += 1
+                    _state._current_summary.append({
+                        "name": name,
+                        "phase": result.phase.value,
+                        "pruned": result.pruned,
+                    })
+            except Exception as exc:
+                logger.warning("analyze_lifecycle: %s failed — %s", name, exc)
+                skipped += 1
+            _state.progress_current += 1
+    finally:
+        _state.progress_current = 0
+        _state.progress_total = 0
+        _state.progress_started_at = None
+
+    _state.last_job_detail = f"classified={classified} pruned={pruned} skipped={skipped}"
+    logger.info("analyze_lifecycle: done (%s)", _state.last_job_detail)
+
+
 _HANDLERS: dict[str, object] = {
-    "market_catalog":  _handle_market_catalog,
-    "price_poll":      _handle_price_poll,
-    "sync_inventory":  _handle_sync_inventory,
+    "market_catalog":   _handle_market_catalog,
+    "price_poll":       _handle_price_poll,
+    "sync_inventory":   _handle_sync_inventory,
     "backfill_history": _handle_backfill_history,
+    "analyze_lifecycle": _handle_analyze_lifecycle,
 }
 
 

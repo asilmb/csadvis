@@ -235,3 +235,24 @@ def sync_backfill_active_endpoint() -> SyncDispatchResponse:
     if not names:
         return SyncDispatchResponse(ok=False, already_running=False, message="No open positions found.")
     return _enqueue({"type": "backfill_history", "names": names}, f"backfill_history ({len(names)} containers)")
+
+
+# ── LC-1: behavioral lifecycle analysis ──────────────────────────────────────
+
+
+class AnalyzeLifecycleRequest(BaseModel):
+    apply_prune: bool = False  # also flip is_blacklisted=1 for floors-breached containers
+
+
+@router.post("/lifecycle/analyze", response_model=SyncDispatchResponse)
+def sync_analyze_lifecycle(req: AnalyzeLifecycleRequest | None = None) -> SyncDispatchResponse:
+    """Enqueue behavioral lifecycle classification + 1/3/6m forecasts for all
+    non-blacklisted containers. When apply_prune=True, also runs the 95 %-failure
+    floors and flips is_blacklisted=1 on breached containers.
+    """
+    apply_prune = bool(req.apply_prune) if req else False
+    label = "analyze_lifecycle" + ("/prune" if apply_prune else "")
+    return _enqueue(
+        {"type": "analyze_lifecycle", "apply_prune": apply_prune},
+        label,
+    )

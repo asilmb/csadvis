@@ -344,6 +344,13 @@ def render_system_status(health=None) -> html.Div:
                 ),
             ]), width="auto"),
             dbc.Col(html.Div([
+                _group_label("Lifecycle"),
+                _btn_group(
+                    dbc.Button("Analyze containers", id="btn-analyze-lifecycle", color="primary", outline=True, size="sm", n_clicks=0),
+                    dbc.Button("Analyze + Prune", id="btn-analyze-lifecycle-prune", color="primary", outline=True, size="sm", n_clicks=0),
+                ),
+            ]), width="auto"),
+            dbc.Col(html.Div([
                 _group_label("Диагностика"),
                 _btn_group(
                     dbc.Button("Ping Steam", id="btn-ping-steam", color="secondary", outline=True, size="sm", n_clicks=0),
@@ -362,6 +369,8 @@ def render_system_status(health=None) -> html.Div:
         dbc.Tooltip("Очищает очередь задач воркера", target="btn-clear-queue", placement="bottom"),
         dbc.Tooltip("Проверяет токен и наличие блокировки Steam", target="btn-ping-steam", placement="bottom"),
         dbc.Tooltip("Открыть форму ввода Steam cookie вручную", target="btn-open-cookie-modal", placement="bottom"),
+        dbc.Tooltip("Пересчитать поведенческую фазу (HMM + гистерезис) и прогнозы 1/3/6м для всех не-blacklisted контейнеров", target="btn-analyze-lifecycle", placement="bottom"),
+        dbc.Tooltip("То же + автоматически выставить is_blacklisted=1 контейнерам, преодолевшим 95%-порог отказа", target="btn-analyze-lifecycle-prune", placement="bottom"),
     ])
 
     # ── Blacklisted containers ─────────────────────────────────────────────────
