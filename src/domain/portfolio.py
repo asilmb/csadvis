@@ -287,6 +287,11 @@ def get_cached_signals() -> dict[str, dict]:
                 "sell_at_loss": bool(r.sell_at_loss),
                 "unrealized_pnl": r.unrealized_pnl,
                 "computed_at": r.computed_at,
+                "current_price": r.current_price,
+                "baseline_price": r.baseline_price,
+                "price_ratio_pct": r.price_ratio_pct,
+                "momentum_pct": r.momentum_pct,
+                "quantity": r.quantity,
             }
             for r in rows
         }

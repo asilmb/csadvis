@@ -29,6 +29,7 @@ from ui.helpers import (
     _BORDER,
     _FEE_DIV,
     _FEE_FIXED,
+    _GOLD,
     _GREEN,
     _MUTED,
     _ORANGE,
@@ -2260,15 +2261,17 @@ def _register_cookie_callbacks(app: dash.Dash) -> None:
         if tid in ("pos-cancel-btn", "pos-submit-btn"):
             return False, {}, "Создать позицию", "", no_update, no_update, "flip", 5
 
+        # Guard: pattern-matching ALL fires when new components are added to layout (n_clicks=0).
+        # Only open the modal on an actual user click.
+        if not triggered.get("value"):
+            raise dash.exceptions.PreventUpdate
+
         # Determine position type from pattern-matching button index
-        # Pattern: {"type": "btn-create-position", "index": "flip"|"invest"}
-        # Also supports hidden stubs: "btn-create-flip-position" / "btn-create-invest-position"
         import json
         try:
             tid_dict = json.loads(tid)
             pos_type = tid_dict.get("index", "flip")
         except (json.JSONDecodeError, AttributeError):
-            # Fallback for string IDs (hidden stubs)
             pos_type = "flip" if "flip" in tid else "investment"
         sig = invest_store.get(selected_cid or "", {}) if invest_store else {}
         from ui.helpers import _get_containers

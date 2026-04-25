@@ -208,6 +208,11 @@ class FactInvestmentSignal(Base):
     event_signal = Column(String(50), nullable=True)
     sell_at_loss = Column(Integer, nullable=False, default=0)  # boolean 0/1
     unrealized_pnl = Column(Float, nullable=True)
+    current_price = Column(Float, nullable=True)
+    baseline_price = Column(Float, nullable=True)
+    price_ratio_pct = Column(Float, nullable=True)
+    momentum_pct = Column(Float, nullable=True)
+    quantity = Column(Integer, nullable=True)
 
     __table_args__ = (Index("ix_investment_signal_computed_at", "computed_at"),)
 

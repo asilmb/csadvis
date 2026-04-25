@@ -118,6 +118,11 @@ def write_investment_signals(db: Session, signals: dict[str, dict], computed_at:
             event_signal=sig.get("event_signal"),
             sell_at_loss=1 if sig.get("sell_at_loss") else 0,
             unrealized_pnl=sig.get("unrealized_pnl"),
+            current_price=sig.get("current_price"),
+            baseline_price=sig.get("baseline_price"),
+            price_ratio_pct=sig.get("price_ratio_pct"),
+            momentum_pct=sig.get("momentum_pct"),
+            quantity=sig.get("quantity"),
         )
         for container_id, sig in signals.items()
     ]

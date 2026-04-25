@@ -78,15 +78,15 @@ def get_db_dep() -> Generator[Session, None, None]:
 def init_db() -> None:
     """
     Создает все таблицы, объявленные в database.models.
-    
+
     Включает защиту от ошибок 'already exists' при создании ENUM типов PostgreSQL,
     которые могут возникать при одновременном запуске нескольких контейнеров.
     """
+    from sqlalchemy import text
+
     from src.domain.models import Base
 
     try:
-        # checkfirst=True корректно обрабатывает таблицы, но для ENUM типов
-        # в PostgreSQL может потребоваться перехват ошибок UniqueViolation.
         Base.metadata.create_all(bind=engine, checkfirst=True)
         logger.info("БД готова (PostgreSQL @ %s:%s/%s)", _pg_host, _pg_port, _pg_db)
     except (IntegrityError, InternalError) as e:
@@ -96,3 +96,21 @@ def init_db() -> None:
         else:
             logger.error("Критическая ошибка инициализации БД: %s", e)
             raise e
+
+    # Additive migrations: add columns that may not exist in older deployments.
+    _new_cols = [
+        ("fact_investment_signals", "current_price",   "DOUBLE PRECISION"),
+        ("fact_investment_signals", "baseline_price",  "DOUBLE PRECISION"),
+        ("fact_investment_signals", "price_ratio_pct", "DOUBLE PRECISION"),
+        ("fact_investment_signals", "momentum_pct",    "DOUBLE PRECISION"),
+        ("fact_investment_signals", "quantity",        "INTEGER"),
+    ]
+    with engine.connect() as conn:
+        for table, col, col_type in _new_cols:
+            try:
+                conn.execute(
+                    text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {col_type}")
+                )
+                conn.commit()
+            except Exception as _col_exc:
+                logger.warning("init_db: could not add column %s.%s — %s", table, col, _col_exc)
