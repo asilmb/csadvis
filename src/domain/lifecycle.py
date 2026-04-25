@@ -218,8 +218,15 @@ def _try_hmm_classify(f: _Features) -> tuple[LifecyclePhase, np.ndarray, dict] |
 
     # Map hidden states {0..3} → LifecyclePhase using emission moments
     # (variance on log-return component is the dominant discriminator).
-    means = model.means_[:, 0]                       # μ on log_returns dim
-    variances = np.array([cov[0] for cov in model.covars_])  # σ² on log_returns
+    # NB: with covariance_type="diag", model.covars_ is the FULL (n,F,F) matrix
+    # in recent hmmlearn versions — extract the diagonal explicitly.
+    means = model.means_[:, 0]                                  # μ on log_returns dim
+    covars = np.asarray(model.covars_)
+    if covars.ndim == 3:
+        diagonals = np.array([np.diag(c) for c in covars])      # (n_states, n_features)
+    else:
+        diagonals = covars                                       # already (n_states, n_features)
+    variances = diagonals[:, 0]                                 # σ² on log_returns dim
     sigmas = np.sqrt(np.clip(variances, a_min=0.0, a_max=None))
 
     # Sort indices by σ ascending: lowest σ → STAGNATION, highest → SPECULATIVE
@@ -309,15 +316,20 @@ def classify_lifecycle(
     if f is None:
         return None, {"reason": "insufficient_data"}
 
+    # Phase classification: ALWAYS metric-based. Per-container HMM on a single
+    # 90-day window of one regime is too unstable for instantaneous decisions
+    # (hmmlearn forces 4 states even on single-regime data → spurious "last
+    # state" assignment). HMM is used purely for forecasting A and μ.
+    candidate = _classify_by_metrics(f)
     hmm_result = _try_hmm_classify(f)
     if hmm_result is not None:
-        candidate, transmat, mu_per_phase = hmm_result
-        source = "hmm"
+        # Discard HMM's phase decision; keep its A and μ for compute_expected_returns.
+        _, transmat, mu_per_phase = hmm_result
+        source = "metric+hmm_forecast"
     else:
-        candidate = _classify_by_metrics(f)
         transmat = _DEFAULT_TRANSITION_MATRIX
         mu_per_phase = dict(_DEFAULT_MU_PER_STATE)
-        source = "metric_fallback"
+        source = "metric_only"
 
     confirmed = _apply_hysteresis(prior_phase, candidate, f)
 
