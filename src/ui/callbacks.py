@@ -1174,6 +1174,39 @@ def register_callbacks(app: Any) -> None:
         return label, data.get("detail", ep_line), "Ping Steam", True, "danger"
 
     @app.callback(
+        Output("app-toast", "children", allow_duplicate=True),
+        Output("app-toast", "header", allow_duplicate=True),
+        Output("app-toast", "is_open", allow_duplicate=True),
+        Output("app-toast", "icon", allow_duplicate=True),
+        Input("btn-refresh-cache", "n_clicks"),
+        running=[
+            (Output("btn-refresh-cache", "disabled"), True, False),
+            (Output("btn-refresh-cache", "children"), [dbc.Spinner(size="sm"), " Обновление…"], "Refresh Cache"),
+        ],
+        prevent_initial_call=True,
+    )
+    def do_refresh_cache(n: Any) -> tuple:
+        if not n:
+            raise dash.exceptions.PreventUpdate
+        try:
+            from infra.cache_writer import refresh_cache as _refresh_cache
+            from src.domain.connection import SessionLocal as _SL
+
+            _db = _SL()
+            try:
+                _refresh_cache(_db)
+                _db.commit()
+            except Exception as exc:
+                _db.rollback()
+                raise exc
+            finally:
+                _db.close()
+        except Exception as exc:
+            logger.error("do_refresh_cache: %s", exc)
+            return str(exc)[:200], "Ошибка", True, "danger"
+        return "Кэш успешно пересчитан", "Refresh Cache", True, "success"
+
+    @app.callback(
         Output("steam-history-status", "children"),
         Output("balance-refresh-store", "data"),
         Output("app-toast", "children", allow_duplicate=True),

@@ -375,6 +375,7 @@ def render_system_status(health=None) -> html.Div:
                 _btn_group(
                     dbc.Button("Ping Steam", id="btn-ping-steam", color="secondary", outline=True, size="sm", n_clicks=0),
                     dbc.Button("Обновить Cookie", id="btn-open-cookie-modal", color="warning", outline=True, size="sm", n_clicks=0),
+                    dbc.Button("Refresh Cache", id="btn-refresh-cache", color="secondary", outline=True, size="sm", n_clicks=0),
                 ),
                 html.Div(id="ping-steam-last", children=_ping_label(last_ping), style={"marginTop": "4px"}),
             ]), width="auto"),
@@ -389,6 +390,7 @@ def render_system_status(health=None) -> html.Div:
         dbc.Tooltip("Очищает очередь задач воркера", target="btn-clear-queue", placement="bottom"),
         dbc.Tooltip("Проверяет токен и наличие блокировки Steam", target="btn-ping-steam", placement="bottom"),
         dbc.Tooltip("Открыть форму ввода Steam cookie вручную", target="btn-open-cookie-modal", placement="bottom"),
+        dbc.Tooltip("Пересчитать кэш портфельных советов и инвестиционных сигналов", target="btn-refresh-cache", placement="bottom"),
         dbc.Tooltip("Пересчитать поведенческую фазу (HMM + гистерезис) и прогнозы 1/3/6м для всех не-blacklisted контейнеров", target="btn-analyze-lifecycle", placement="bottom"),
         dbc.Tooltip("То же + автоматически выставить is_blacklisted=1 контейнерам, преодолевшим 95%-порог отказа", target="btn-analyze-lifecycle-prune", placement="bottom"),
     ])
