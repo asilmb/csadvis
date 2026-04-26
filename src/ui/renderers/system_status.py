@@ -12,7 +12,7 @@ from __future__ import annotations
 import dash_bootstrap_components as dbc
 from dash import dcc, html
 
-from ui.helpers import _BG2, _BORDER, _GREEN, _MUTED, _RED, _TEXT
+from ui.helpers import _BG2, _BLUE, _BORDER, _GREEN, _MUTED, _RED, _TEXT
 
 _GOLD = "#e8c84a"
 _ORANGE = "#e07b39"
@@ -91,6 +91,7 @@ def _render_progress(worker: dict) -> list:
     last_volume = worker.get("last_item_volume", 0)
     last_job_detail = worker.get("last_job_detail", "")
     queue_items = worker.get("queue_items", [])
+    sub_phase = worker.get("sub_phase", "")
 
     # ── Phase badge ───────────────────────────────────────────────────────────
     phase_label, phase_color, warn_after = _PHASE_META.get(phase, ("● Работает", _MUTED, 120))
@@ -140,6 +141,25 @@ def _render_progress(worker: dict) -> list:
     if eta_str:
         header_parts.append(
             html.Span(eta_str, style={"color": _GOLD, "fontSize": "11px", "marginLeft": "6px"})
+        )
+
+    # ── Sub-phase badge (e.g. lifecycle analysis running after backfill) ─────
+    if sub_phase == "lifecycle":
+        header_parts.append(
+            html.Span(
+                "🔬 Анализ lifecycle",
+                style={
+                    "backgroundColor": f"{_BLUE}22",
+                    "border": f"1px solid {_BLUE}",
+                    "borderRadius": "4px",
+                    "color": _BLUE,
+                    "fontSize": "11px",
+                    "fontWeight": "600",
+                    "padding": "1px 8px",
+                    "display": "inline-block",
+                    "marginLeft": "6px",
+                },
+            )
         )
 
     # ── Progress bar ──────────────────────────────────────────────────────────

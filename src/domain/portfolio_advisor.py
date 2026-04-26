@@ -596,17 +596,12 @@ def allocate_portfolio(
             _flip_rejected["no_volatility_data"] = _flip_rejected.get("no_volatility_data", 0) + 1
             continue  # insufficient price history for flip assessment
 
-        # LC-1: behavioral lifecycle gate — only STABLE_LIQUIDITY qualifies for flip.
+        # LC-1: lifecycle phase as score modifier (not a hard gate).
+        # Numeric filters (volatility, volume, margin) already ensure flip viability.
         _lc_prices, _lc_vols = _lc_extract_series(_history_for_lc)
+        _lc_phase = None
         if _lc_prices:
             _lc_phase, _ = classify_lifecycle(_lc_prices, _lc_vols, _lc_prior_phase(c))
-            if _lc_phase is None:
-                _flip_rejected["lifecycle_no_data"] = _flip_rejected.get("lifecycle_no_data", 0) + 1
-                continue
-            if not is_flip_eligible(_lc_phase):
-                key = f"lifecycle_{_lc_phase.value}"
-                _flip_rejected[key] = _flip_rejected.get(key, 0) + 1
-                continue
 
         # Float: avg daily volume (proxy for liquidity)
         avg_daily_vol = weekly_vol / 7 if weekly_vol else 0.0
@@ -675,7 +670,8 @@ def allocate_portfolio(
         effective_hold_days = 7.0 + queue_days
         spread_factor = 1.0 - spread_pct
         weekly_roi = unit_margin_pct / (effective_hold_days / 7.0)
-        flip_score = weekly_roi * (1.0 - vol_30d) * spread_factor
+        lc_multiplier = 1.1 if is_flip_eligible(_lc_phase) else (0.85 if _lc_phase is not None else 1.0)
+        flip_score = weekly_roi * (1.0 - vol_30d) * spread_factor * lc_multiplier
 
         if flip_score <= 0:
             _flip_rejected["zero_score"] = _flip_rejected.get("zero_score", 0) + 1

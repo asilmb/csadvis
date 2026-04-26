@@ -429,7 +429,7 @@ class ItemService:
         """
         from src.domain.portfolio import get_cached_signals
         cached = get_cached_signals()
-        if cached:
+        if cached and any(sig.get("current_price") is not None for sig in cached.values()):
             return cached
 
         # Live fallback: build price_data dict and run signal engine

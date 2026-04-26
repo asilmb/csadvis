@@ -134,7 +134,8 @@ def sync_container_price(container_id: str, db: Session = Depends(get_db)) -> Sy
         from infra.work_queue import enqueue
         enqueue({"type": "backfill_history", "names": [str(c.container_name)]})
         enqueue({"type": "price_poll", "container_id": container_id})
-        return SyncDispatchResponse(ok=True, already_running=False, task_id=container_id, message="History + price fetch enqueued.")
+        enqueue({"type": "analyze_lifecycle", "container_ids": [container_id], "apply_prune": False})
+        return SyncDispatchResponse(ok=True, already_running=False, task_id=container_id, message="History + price + lifecycle enqueued.")
     except asyncio.QueueFull:
         return SyncDispatchResponse(ok=False, already_running=True, message="Queue full — try again shortly.")
     except Exception as exc:

@@ -91,6 +91,7 @@ class _WorkerState:
     current_item_name: str = ""  # item being fetched right now (before completion)
     _current_task: asyncio.Task | None = field(default=None, repr=False, compare=False)
     _current_summary: list[dict] = field(default_factory=list, repr=False)
+    sub_phase: str = ""            # extra label shown in UI during long post-processing steps
 
 
 _state = _WorkerState()
@@ -203,6 +204,7 @@ def get_worker_state() -> dict:
         "phase": _state.phase,
         "seconds_in_phase": seconds_in_phase,
         "current_item_name": _state.current_item_name,
+        "sub_phase": _state.sub_phase,
     }
 
 
@@ -534,7 +536,13 @@ async def _handle_backfill_history(job: dict) -> None:
     # LC-1: refresh behavioral phase + forecasts for backfilled containers.
     backfill_names = job.get("names") or []
     if backfill_names:
-        await asyncio.to_thread(_analyze_lifecycle_for_names, backfill_names)
+        _state.sub_phase = "lifecycle"
+        try:
+            await asyncio.to_thread(_analyze_lifecycle_for_names, backfill_names)
+        except Exception as _lc_exc:
+            logger.warning("backfill_history: lifecycle analysis failed — %s", _lc_exc)
+        finally:
+            _state.sub_phase = ""
     try:
         await asyncio.wait_for(asyncio.to_thread(_run_cache_refresh, "backfill_history"), timeout=300)
     except (TimeoutError, asyncio.TimeoutError):
