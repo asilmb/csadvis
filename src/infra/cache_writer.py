@@ -211,6 +211,180 @@ def _fetch_order_book_data(
         return None
 
 
+# ─── Portfolio-only refresh (skips signal recompute) ──────────────────────────
+
+
+def refresh_portfolio_advice(db: Session) -> int:
+    """
+    Recompute allocate_portfolio() and persist to fact_portfolio_advice only.
+    Investment signals are read from the existing fact_investment_signals cache
+    instead of being recomputed — making this significantly faster than refresh_cache().
+
+    Returns the number of containers processed.
+    Does NOT call db.commit() — caller owns the transaction.
+    """
+    from scrapper.steam_wallet import get_saved_balance
+    from src.domain.connection import SessionLocal
+    from src.domain.models import DimContainer, DimUserPosition, FactContainerPrice, FactInvestmentSignal
+    from src.domain.portfolio import get_portfolio_data
+    from src.domain.portfolio_advisor import allocate_portfolio
+    from src.domain.trade_advisor import compute_trade_advice
+
+    balance = float(get_saved_balance() or 0)
+    price_data = get_portfolio_data()
+
+    _db = SessionLocal()
+    try:
+        containers = _db.query(DimContainer).all()
+        positions = _db.query(DimUserPosition).all()
+        cached_signals = _db.query(FactInvestmentSignal).all()
+    finally:
+        _db.close()
+
+    if not containers:
+        logger.warning("refresh_portfolio_advice: no containers — skipping.")
+        return 0
+
+    positions_map: dict = {str(p.container_name): p.buy_date for p in positions}
+
+    # Reconstruct invest_signals dict from cache table
+    invest_signals: dict[str, dict] = {
+        str(s.container_id): {
+            "verdict": s.verdict,
+            "score": s.score,
+            "ratio_signal": s.ratio_signal,
+            "momentum_signal": s.momentum_signal,
+            "trend_signal": s.trend_signal,
+            "event_signal": s.event_signal,
+            "sell_at_loss": bool(s.sell_at_loss),
+            "unrealized_pnl": s.unrealized_pnl,
+            "current_price": s.current_price,
+            "baseline_price": s.baseline_price,
+            "price_ratio_pct": s.price_ratio_pct,
+            "momentum_pct": s.momentum_pct,
+            "quantity": s.quantity,
+        }
+        for s in cached_signals
+    }
+
+    cids = [str(c.container_id) for c in containers]
+
+    _db2 = SessionLocal()
+    try:
+        from sqlalchemy import asc
+
+        market_rows = (
+            _db2.query(FactContainerPrice)
+            .filter(
+                FactContainerPrice.container_id.in_(cids),
+                FactContainerPrice.source == "steam_market",
+            )
+            .order_by(asc(FactContainerPrice.timestamp))
+            .all()
+        )
+        market_histories: dict[str, list[dict]] = {cid: [] for cid in cids}
+        for r in market_rows:
+            cid = str(r.container_id)
+            if cid in market_histories:
+                market_histories[cid].append(
+                    {
+                        "timestamp": r.timestamp.strftime("%Y-%m-%d %H:%M"),
+                        "price": r.price,
+                        "mean_price": r.mean_price,
+                        "volume_7d": r.volume_7d,
+                    }
+                )
+
+        live_rows = (
+            _db2.query(FactContainerPrice)
+            .filter(
+                FactContainerPrice.container_id.in_(cids),
+                FactContainerPrice.source == "steam_live",
+            )
+            .order_by(asc(FactContainerPrice.timestamp))
+            .all()
+        )
+        live_histories: dict[str, list[dict]] = {cid: [] for cid in cids}
+        for r in live_rows:
+            cid = str(r.container_id)
+            if cid in live_histories:
+                live_histories[cid].append(
+                    {
+                        "timestamp": r.timestamp.strftime("%Y-%m-%d %H:%M"),
+                        "price": r.price,
+                        "mean_price": r.mean_price,
+                        "volume_7d": r.volume_7d,
+                    }
+                )
+
+        full_rows = (
+            _db2.query(FactContainerPrice)
+            .filter(FactContainerPrice.container_id.in_(cids))
+            .order_by(asc(FactContainerPrice.timestamp))
+            .all()
+        )
+        full_histories: dict[str, list[dict]] = {cid: [] for cid in cids}
+        for r in full_rows:
+            cid = str(r.container_id)
+            if cid in full_histories:
+                full_histories[cid].append(
+                    {
+                        "timestamp": r.timestamp.strftime("%Y-%m-%d %H:%M"),
+                        "price": r.price,
+                        "mean_price": r.mean_price,
+                        "volume_7d": r.volume_7d,
+                    }
+                )
+    finally:
+        _db2.close()
+
+    trade_advice: dict = {}
+    for c in containers:
+        cid = str(c.container_id)
+        live_hist = live_histories.get(cid, [])
+        hist = live_hist if len(live_hist) >= 5 else full_histories.get(cid, [])
+        trade_advice[cid] = compute_trade_advice(
+            str(c.container_name),
+            float(c.base_cost),
+            c.container_type.value,
+            hist,
+        )
+
+    price_history: dict = {
+        str(c.container_id): market_histories.get(str(c.container_id), []) for c in containers
+    }
+
+    order_book_data: dict | None = None
+    try:
+        order_book_data = _fetch_order_book_data(containers, trade_advice, price_data)
+    except Exception as _wb_exc:
+        logger.warning(
+            "refresh_portfolio_advice: order book pre-fetch failed (%s) — wall filter disabled",
+            _wb_exc,
+        )
+
+    plan = allocate_portfolio(
+        balance=balance,
+        inventory_items=[],
+        containers=containers,
+        price_data=price_data,
+        trade_advice=trade_advice,
+        price_history=price_history,
+        invest_signals=invest_signals,
+        positions_map=positions_map,
+        order_book_data=order_book_data,
+    )
+
+    write_portfolio_advice(db, plan)
+
+    logger.info(
+        "refresh_portfolio_advice: wrote portfolio advice for %d containers. balance=%s",
+        len(containers),
+        Amount(balance),
+    )
+    return len(containers)
+
+
 # ─── Full refresh (engine recompute + write) ───────────────────────────────────
 
 

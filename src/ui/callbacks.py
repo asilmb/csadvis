@@ -1207,6 +1207,39 @@ def register_callbacks(app: Any) -> None:
         return "Кэш успешно пересчитан", "Refresh Cache", True, "success"
 
     @app.callback(
+        Output("app-toast", "children", allow_duplicate=True),
+        Output("app-toast", "header", allow_duplicate=True),
+        Output("app-toast", "is_open", allow_duplicate=True),
+        Output("app-toast", "icon", allow_duplicate=True),
+        Input("btn-refresh-portfolio", "n_clicks"),
+        running=[
+            (Output("btn-refresh-portfolio", "disabled"), True, False),
+            (Output("btn-refresh-portfolio", "children"), [dbc.Spinner(size="sm"), " Обновление…"], "Refresh Portfolio"),
+        ],
+        prevent_initial_call=True,
+    )
+    def do_refresh_portfolio(n: Any) -> tuple:
+        if not n:
+            raise dash.exceptions.PreventUpdate
+        try:
+            from infra.cache_writer import refresh_portfolio_advice as _refresh_portfolio
+            from src.domain.connection import SessionLocal as _SL
+
+            _db = _SL()
+            try:
+                count = _refresh_portfolio(_db)
+                _db.commit()
+            except Exception as exc:
+                _db.rollback()
+                raise exc
+            finally:
+                _db.close()
+        except Exception as exc:
+            logger.error("do_refresh_portfolio: %s", exc)
+            return str(exc)[:200], "Ошибка", True, "danger"
+        return f"Портфель пересчитан ({count} контейнеров)", "Refresh Portfolio", True, "success"
+
+    @app.callback(
         Output("steam-history-status", "children"),
         Output("balance-refresh-store", "data"),
         Output("app-toast", "children", allow_duplicate=True),
